@@ -137,17 +137,18 @@ Examples of ACCEPTABLE responses:
 
 Use the original task context to provide helpful feedback if reiteration is needed.
 
-Respond ONLY with this JSON (no other text):
+PREFERRED FORMAT (JSON):
 {
   "verdict": "DONE",
   "reason": "<brief explanation>"
 }
 
-Or if there are real issues:
-{
-  "verdict": "REITERATE",
-  "reason": "<specific, actionable feedback to improve>"
-}
+ALTERNATIVE: If JSON is difficult, include clear completion indicators:
+- "status": "DONE" or "verdict": "DONE" patterns
+- Words like "DONE", "success", "completed", "finished"
+- Clear indication that the task is complete
+
+The system will accept both valid JSON and responses with clear completion indicators.
 """
 
 # ============================================================================
@@ -172,8 +173,18 @@ def extract_json(text):
     for line in lines:
         if '{' in line and not in_json:
             in_json = True
-            current_json = [line]
-            brace_count = line.count('{') - line.count('}')
+            # Extract from the opening brace onwards, preserving leading whitespace
+            brace_index = line.find('{')
+            # Check if text before brace is only whitespace
+            prefix = line[:brace_index]
+            if prefix.strip() == '':
+                # Only whitespace before brace, include it
+                current_json = [line]
+                brace_count = line.count('{') - line.count('}')
+            else:
+                # Non-whitespace text before brace, extract from brace onwards
+                current_json = [line[brace_index:]]
+                brace_count = line[brace_index:].count('{') - line[brace_index:].count('}')
         elif in_json:
             current_json.append(line)
             brace_count += line.count('{') - line.count('}')
@@ -259,13 +270,62 @@ def extract_lenient_json(text):
     return None, "no_valid_structure"
 
 
-def parse_json_verdict(json_text):
-    """Parse verdict and reason from auditor JSON response."""
+def parse_lenient_verdict(text):
+    """Parse verdict and reason from auditor response with lenient parsing."""
+    # First try strict JSON parsing
     try:
-        data = json.loads(json_text)
-        return data.get('verdict'), data.get('reason'), data.get('advice', '')
+        data = json.loads(text)
+        verdict = data.get('verdict')
+        if verdict:
+            verdict = verdict.upper()  # Normalize to uppercase
+        reason = data.get('reason', '')
+        advice = data.get('advice', '')
+        return verdict, reason, advice
     except json.JSONDecodeError:
-        return None, None, None
+        pass
+
+    # Fall back to pattern matching for completion indicators
+    text_lower = text.lower().strip()
+
+    # Look for verdict patterns (quoted and unquoted keys)
+    if 'verdict' in text_lower:
+        # Extract verdict value - look for verdict: "DONE" or "verdict": "DONE"
+        verdict_match = re.search(r'(?:"verdict"|\bverdict\b)\s*:\s*"([^"]*)"', text, re.IGNORECASE)
+        if verdict_match:
+            verdict = verdict_match.group(1).upper()
+            if verdict in ['DONE', 'REITERATE']:
+                # Try to extract reason (quoted and unquoted keys)
+                reason_match = re.search(r'(?:"reason"|\breason\b)\s*:\s*"([^"]*)"', text, re.IGNORECASE)
+                reason = reason_match.group(1) if reason_match else "Parsed from lenient verdict extraction"
+                return verdict, reason, ''
+
+    # Look for status patterns (user's specific suggestion)
+    if '"status"' in text_lower:
+        # Look for "status": "DONE" on the same line
+        lines = text.split('\n')
+        for line in lines:
+            line_lower = line.lower()
+            if '"status"' in line_lower and ('"done"' in line_lower or '"success"' in line_lower):
+                # Check if DONE/success appears after status on the same line
+                status_pos = line_lower.find('"status"')
+                done_pos = line_lower.find('"done"', status_pos)
+                success_pos = line_lower.find('"success"', status_pos)
+                if done_pos > status_pos or success_pos > status_pos:
+                    return "DONE", "Parsed from status completion indicator", ''
+
+    # Look for plain completion indicators as fallback
+    completion_indicators = ['done', 'success', 'successful', 'completed', 'finished']
+    for indicator in completion_indicators:
+        if indicator in text_lower:
+            return "DONE", f"Parsed from completion indicator: {indicator}", ''
+
+    # No clear verdict found
+    return None, None, None
+
+
+def parse_json_verdict(json_text):
+    """Parse verdict and reason from auditor JSON response (backward compatibility)."""
+    return parse_lenient_verdict(json_text)
 
 
 def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30):
@@ -562,10 +622,11 @@ def strip_ansi(text):
 # ============================================================================
 
 
-def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="claude", resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30):
-    """Run the oneshot task with worker and auditor loop."""
+def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30):
+    """Run the oneshot task with worker and auditor loop using provider objects."""
+    from .providers import Provider
 
-    log_info(f"Starting oneshot: worker={worker_model}, auditor={auditor_model}, executor={executor}")
+    log_info(f"Starting oneshot with worker provider: {worker_provider.config.provider_type}, auditor provider: {auditor_provider.config.provider_type}")
     log_debug(f"Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"Prompt: {prompt}")
 
     # Determine session file
@@ -617,8 +678,8 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
         log_debug(f"Full prompt length: {len(full_prompt)} chars")
         dump_buffer("Worker Prompt", full_prompt, max_lines=10)
 
-        log_verbose(f"Calling worker model: {worker_model}")
-        worker_output = call_executor(full_prompt, worker_model, executor=executor)
+        log_verbose(f"Calling worker provider")
+        worker_output = worker_provider.generate(full_prompt)
         dump_buffer("Worker Output", worker_output)
         print(worker_output)
 
@@ -662,8 +723,8 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
         full_auditor_prompt = AUDITOR_PROMPT + "\n\n" + audit_input
         log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
 
-        log_verbose(f"Calling auditor model: {auditor_model}")
-        audit_response = call_executor(full_auditor_prompt, auditor_model, executor=executor)
+        log_verbose(f"Calling auditor provider")
+        audit_response = auditor_provider.generate(full_auditor_prompt)
         dump_buffer("Auditor Response", audit_response)
 
         # Log auditor response
@@ -672,17 +733,17 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
             f.write(f"\n### Iteration {iteration} - Auditor Response\n\n")
             f.write(strip_ansi(audit_response) + "\n")
 
-        # Extract JSON from auditor response
-        log_verbose("Extracting JSON from auditor response")
+        # Extract verdict from auditor response using lenient parsing
+        log_verbose("Extracting verdict from auditor response (lenient parsing)")
+        verdict, reason, advice = parse_lenient_verdict(audit_response)
+        log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
+
+        # Also try to extract JSON for backward compatibility and logging
         auditor_json = extract_json(audit_response)
         dump_buffer("Extracted Auditor JSON", auditor_json or "NO JSON FOUND", max_lines=10)
 
-        if auditor_json:
-            verdict, reason, advice = parse_json_verdict(auditor_json)
-            log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
-        else:
-            verdict, reason, advice = None, None, None
-            log_info("Could not extract JSON from auditor response")
+        if not verdict:
+            log_info("Could not extract verdict from auditor response")
 
         print(f"Auditor verdict: {verdict}")
         if reason:
@@ -732,16 +793,17 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
     return False
 
 
-async def run_oneshot_async(prompt, worker_model, auditor_model, max_iterations,
-                          executor="claude", resume=False, session_file=None,
+async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_iterations,
+                          resume=False, session_file=None,
                           session_log=None, keep_log=False, initial_timeout=300,
                           max_timeout=3600, activity_interval=30):
     """
-    Async version of run_oneshot using OneshotTask for better process management.
+    Async version of run_oneshot using provider objects.
     """
     from .orchestrator import AsyncOrchestrator
+    from .providers import Provider
 
-    log_info(f"Starting async oneshot: worker={worker_model}, auditor={auditor_model}, executor={executor}")
+    log_info(f"Starting async oneshot with worker provider: {worker_provider.config.provider_type}, auditor provider: {auditor_provider.config.provider_type}")
     log_debug(f"Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"Prompt: {prompt}")
 
     # Determine session file
@@ -800,14 +862,10 @@ async def run_oneshot_async(prompt, worker_model, auditor_model, max_iterations,
             log_debug(f"Full prompt length: {len(full_prompt)} chars")
             dump_buffer("Worker Prompt", full_prompt, max_lines=10)
 
-            log_verbose(f"Calling worker model: {worker_model}")
+            log_verbose(f"Calling worker provider asynchronously")
 
-            # Use async executor
-            worker_output = await call_executor_async(
-                full_prompt, worker_model, executor=executor,
-                initial_timeout=initial_timeout, max_timeout=max_timeout,
-                activity_interval=activity_interval
-            )
+            # Use async provider
+            worker_output = await worker_provider.generate_async(full_prompt)
             dump_buffer("Worker Output", worker_output)
             print(worker_output)
 
@@ -851,12 +909,8 @@ async def run_oneshot_async(prompt, worker_model, auditor_model, max_iterations,
             full_auditor_prompt = AUDITOR_PROMPT + "\n\n" + audit_input
             log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
 
-            log_verbose(f"Calling auditor model: {auditor_model}")
-            audit_response = await call_executor_async(
-                full_auditor_prompt, auditor_model, executor=executor,
-                initial_timeout=initial_timeout, max_timeout=max_timeout,
-                activity_interval=activity_interval
-            )
+            log_verbose(f"Calling auditor provider asynchronously")
+            audit_response = await auditor_provider.generate_async(full_auditor_prompt)
             dump_buffer("Auditor Response", audit_response)
 
             # Log auditor response
@@ -865,17 +919,17 @@ async def run_oneshot_async(prompt, worker_model, auditor_model, max_iterations,
                 f.write(f"\n### Iteration {iteration} - Auditor Response\n\n")
                 f.write(strip_ansi(audit_response) + "\n")
 
-            # Extract JSON from auditor response
-            log_verbose("Extracting JSON from auditor response")
+            # Extract verdict from auditor response using lenient parsing
+            log_verbose("Extracting verdict from auditor response (lenient parsing)")
+            verdict, reason, advice = parse_lenient_verdict(audit_response)
+            log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
+
+            # Also try to extract JSON for backward compatibility and logging
             auditor_json = extract_json(audit_response)
             dump_buffer("Extracted Auditor JSON", auditor_json or "NO JSON FOUND", max_lines=10)
 
-            if auditor_json:
-                verdict, reason, advice = parse_json_verdict(auditor_json)
-                log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
-            else:
-                verdict, reason, advice = None, None, None
-                log_info("Could not extract JSON from auditor response")
+            if not verdict:
+                log_info("Could not extract verdict from auditor response")
 
             print(f"Auditor verdict: {verdict}")
             if reason:
@@ -937,6 +991,100 @@ def count_iterations(log_file):
         return len(re.findall(r'^## Iteration \d+', content, re.MULTILINE))
     except:
         return 0
+
+
+# ============================================================================
+# BACKWARD COMPATIBILITY WRAPPER
+# ============================================================================
+
+def run_oneshot_legacy(prompt, worker_model, auditor_model, max_iterations, executor="claude",
+                       resume=False, session_file=None, session_log=None, keep_log=False,
+                       initial_timeout=300, max_timeout=3600, activity_interval=30):
+    """
+    Backward-compatible wrapper that accepts model strings and creates providers.
+
+    This function maintains the old API signature while using the new provider system internally.
+    """
+    from .providers import ProviderConfig, create_provider
+
+    # Create worker provider config
+    worker_config = ProviderConfig(
+        provider_type='executor',
+        executor=executor,
+        model=worker_model,
+        timeout=initial_timeout
+    )
+
+    # Create auditor provider config
+    auditor_config = ProviderConfig(
+        provider_type='executor',
+        executor=executor,
+        model=auditor_model,
+        timeout=initial_timeout
+    )
+
+    # Create provider instances
+    worker_provider = create_provider(worker_config)
+    auditor_provider = create_provider(auditor_config)
+
+    # Call the new provider-based run_oneshot
+    return run_oneshot(
+        prompt=prompt,
+        worker_provider=worker_provider,
+        auditor_provider=auditor_provider,
+        max_iterations=max_iterations,
+        resume=resume,
+        session_file=session_file,
+        session_log=session_log,
+        keep_log=keep_log,
+        initial_timeout=initial_timeout,
+        max_timeout=max_timeout,
+        activity_interval=activity_interval
+    )
+
+
+async def run_oneshot_async_legacy(prompt, worker_model, auditor_model, max_iterations, executor="claude",
+                                   resume=False, session_file=None, session_log=None, keep_log=False,
+                                   initial_timeout=300, max_timeout=3600, activity_interval=30):
+    """
+    Backward-compatible async wrapper that accepts model strings and creates providers.
+    """
+    from .providers import ProviderConfig, create_provider
+
+    # Create worker provider config
+    worker_config = ProviderConfig(
+        provider_type='executor',
+        executor=executor,
+        model=worker_model,
+        timeout=initial_timeout
+    )
+
+    # Create auditor provider config
+    auditor_config = ProviderConfig(
+        provider_type='executor',
+        executor=executor,
+        model=auditor_model,
+        timeout=initial_timeout
+    )
+
+    # Create provider instances
+    worker_provider = create_provider(worker_config)
+    auditor_provider = create_provider(auditor_config)
+
+    # Call the new provider-based run_oneshot_async
+    return await run_oneshot_async(
+        prompt=prompt,
+        worker_provider=worker_provider,
+        auditor_provider=auditor_provider,
+        max_iterations=max_iterations,
+        resume=resume,
+        session_file=session_file,
+        session_log=session_log,
+        keep_log=keep_log,
+        initial_timeout=initial_timeout,
+        max_timeout=max_timeout,
+        activity_interval=activity_interval
+    )
 
 
 # ============================================================================
@@ -1093,8 +1241,8 @@ Examples:
                 print("❌ No existing session found to resume")
                 sys.exit(1)
 
-    # Run oneshot
-    success = run_oneshot(
+    # Run oneshot using legacy wrapper for backward compatibility
+    success = run_oneshot_legacy(
         prompt=args.prompt,
         worker_model=args.worker_model,
         auditor_model=args.auditor_model,

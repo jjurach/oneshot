@@ -5,7 +5,7 @@ import asyncio
 from unittest.mock import patch, mock_open
 from pathlib import Path
 import tempfile
-from oneshot.oneshot import run_oneshot
+from oneshot.oneshot import run_oneshot_legacy as run_oneshot
 
 
 class TestRunOneshot:
@@ -67,7 +67,7 @@ class TestAsyncOneshot:
     @patch('builtins.print')
     async def test_run_oneshot_async_success(self, mock_print):
         """Test successful async oneshot execution."""
-        from oneshot.oneshot import run_oneshot_async
+        from oneshot.oneshot import run_oneshot_async_legacy as run_oneshot_async
 
         with patch('oneshot.oneshot.call_executor_async') as mock_call:
             # Mock successful worker and auditor responses
@@ -93,7 +93,7 @@ class TestAsyncOneshot:
     @patch('builtins.print')
     async def test_run_oneshot_async_max_iterations(self, mock_print):
         """Test async oneshot reaching max iterations."""
-        from oneshot.oneshot import run_oneshot_async
+        from oneshot.oneshot import run_oneshot_async_legacy as run_oneshot_async
 
         with patch('oneshot.oneshot.call_executor_async') as mock_call:
             # Mock responses that always reiterate

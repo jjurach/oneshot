@@ -4,15 +4,22 @@ Autonomous task completion with auditor validation.
 
 Oneshot is a command-line tool that uses AI models in a worker-auditor loop to autonomously complete tasks. The worker attempts to complete the task, and an auditor validates the results, providing feedback for improvement until the task is successfully completed.
 
-Currently supports Claude models (via `claude` command) and Cline (via `cline` command).
+Supports multiple provider types:
+- **Executor providers**: Claude (via `claude` command) and Cline (via `cline` command)
+- **Direct providers**: OpenAI-compatible API endpoints (Ollama, OpenAI, etc.)
 
 ## Features
 
 - **Autonomous Task Completion**: Uses AI models to complete tasks without constant human supervision
 - **Auditor Validation**: Built-in validation loop ensures quality and correctness
 - **Session Management**: Tracks progress across iterations with detailed session logs
+- **Flexible Provider System**:
+  - **Executor Provider**: Subprocess-based executors (`claude`, `cline`)
+  - **Direct Provider**: Direct HTTP API calls to OpenAI-compatible endpoints
+  - **Mixed Providers**: Use different providers for worker and auditor (e.g., expensive commercial worker + free local auditor)
+- **Local Model Support**: Direct integration with Ollama and other OpenAI-compatible APIs
 - **Multiple Executors**: Supports both `claude` and `cline` executors
-- **Configurable Models**: Choose different models for worker and auditor roles (Claude or xAI Grok)
+- **Configurable Models**: Choose different models for worker and auditor roles
 - **Resume Capability**: Continue interrupted sessions from where they left off
 
 ## Installation
@@ -76,6 +83,70 @@ oneshot --verbose "Debug this task"
 oneshot --executor cline "Task for cline"
 ```
 
+### Provider Configuration
+
+Oneshot supports flexible provider configuration, allowing you to mix and match different providers for worker and auditor roles:
+
+#### Provider Types
+
+- **executor**: Subprocess-based executors (claude, cline)
+- **direct**: Direct HTTP API calls to OpenAI-compatible endpoints
+
+#### Using Local Models (Direct Provider)
+
+Run both worker and auditor with local Ollama:
+
+```bash
+oneshot --worker-provider direct \
+        --worker-endpoint http://localhost:11434/v1/chat/completions \
+        --worker-model qwen3-8b-coding \
+        --auditor-provider direct \
+        --auditor-endpoint http://localhost:11434/v1/chat/completions \
+        --auditor-model qwen3-8b-coding \
+        "What is 2+2?"
+```
+
+#### Mixed Providers
+
+Use expensive model for worker, cheap local model for auditor:
+
+```bash
+oneshot --worker-provider executor \
+        --executor claude \
+        --worker-model claude-opus-4-5-20251101 \
+        --auditor-provider direct \
+        --auditor-endpoint http://localhost:11434/v1/chat/completions \
+        --auditor-model qwen3-8b-coding \
+        "Write a complex Python function"
+```
+
+#### Using OpenAI API
+
+```bash
+oneshot --worker-provider direct \
+        --worker-endpoint https://api.openai.com/v1/chat/completions \
+        --worker-model gpt-4 \
+        --worker-api-key $OPENAI_API_KEY \
+        --auditor-provider direct \
+        --auditor-endpoint https://api.openai.com/v1/chat/completions \
+        --auditor-model gpt-3.5-turbo \
+        --auditor-api-key $OPENAI_API_KEY \
+        "Complete this task"
+```
+
+#### Different Executors
+
+Use different executors for worker and auditor:
+
+```bash
+oneshot --worker-provider executor \
+        --executor claude \
+        --worker-model claude-3-5-sonnet-20241022 \
+        --auditor-provider executor \
+        --auditor-executor cline \
+        "Task description"
+```
+
 ### Command Line Options
 
 - `prompt`: The task to complete (required)
@@ -92,6 +163,16 @@ oneshot --executor cline "Task for cline"
 - `--verbose`: Enable verbose output with buffer dumps
 - `--debug`: Enable debug output with detailed internals
 - `--executor`: Executor to use: 'claude' or 'cline' (default: cline)
+
+#### Provider Configuration Options
+
+- `--worker-provider`: Worker provider type: 'executor' or 'direct'
+- `--worker-endpoint`: API endpoint URL for worker when using direct provider
+- `--worker-api-key`: API key for worker direct provider (optional for local models)
+- `--auditor-provider`: Auditor provider type: 'executor' or 'direct'
+- `--auditor-executor`: Executor to use for auditor when using executor provider
+- `--auditor-endpoint`: API endpoint URL for auditor when using direct provider
+- `--auditor-api-key`: API key for auditor direct provider (optional for local models)
 
 ## How It Works
 
@@ -115,8 +196,13 @@ All interactions are logged to timestamped markdown files in the current directo
 ## Requirements
 
 - Python 3.8+
-- Access to Claude API (via `claude` command) or Cline (via `cline` command)
-- The external executors must be properly configured and available in PATH
+- For executor provider:
+  - Access to Claude API (via `claude` command) or Cline (via `cline` command)
+  - The external executors must be properly configured and available in PATH
+- For direct provider:
+  - `requests` library (for synchronous HTTP calls)
+  - `httpx` library (for asynchronous HTTP calls)
+  - Access to an OpenAI-compatible API endpoint (e.g., Ollama, OpenAI, etc.)
 
 ## Development
 

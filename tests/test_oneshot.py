@@ -23,6 +23,7 @@ from oneshot.oneshot import (
     read_session_context,
     strip_ansi,
     run_oneshot,
+    run_oneshot_legacy,
     count_iterations,
     contains_completion_indicators,
     extract_lenient_json
@@ -327,7 +328,7 @@ class TestRunOneshot:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Override SESSION_DIR for this test
             with patch('oneshot.oneshot.SESSION_DIR', Path(tmpdir)):
-                success = run_oneshot(
+                success = run_oneshot_legacy(
                     prompt="Test task",
                     worker_model="test-worker",
                     auditor_model="test-auditor",
@@ -368,7 +369,7 @@ class TestRunOneshot:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Override SESSION_DIR for this test
             with patch('oneshot.oneshot.SESSION_DIR', Path(tmpdir)):
-                success = run_oneshot(
+                success = run_oneshot_legacy(
                     prompt="Test task",
                     worker_model="test-worker",
                     auditor_model="test-auditor",
@@ -792,7 +793,7 @@ class TestAsyncOneshot:
     @patch('builtins.print')
     async def test_run_oneshot_async_success(self, mock_print):
         """Test successful async oneshot execution."""
-        from oneshot.oneshot import run_oneshot_async
+        from oneshot.oneshot import run_oneshot_async_legacy as run_oneshot_async
 
         with patch('oneshot.oneshot.call_executor_async') as mock_call:
             # Mock successful worker and auditor responses
@@ -821,7 +822,7 @@ class TestAsyncOneshot:
     @patch('builtins.print')
     async def test_run_oneshot_async_max_iterations(self, mock_print):
         """Test async oneshot reaching max iterations."""
-        from oneshot.oneshot import run_oneshot_async
+        from oneshot.oneshot import run_oneshot_async_legacy as run_oneshot_async
 
         with patch('oneshot.oneshot.call_executor_async') as mock_call:
             # Mock responses that always reiterate

@@ -32,6 +32,8 @@ classifiers = [
 dependencies = [
     "anyio>=4.0.0",
     "python-statemachine>=2.0.0",
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
 ]
 
 [project.optional-dependencies]

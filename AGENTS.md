@@ -35,6 +35,16 @@
 
 ## 2. Project Component & Skill Routing Guide
 
+General references to "planning" e.g. "plan this" or "Start thinking about next project plan" should be interpreted to trigger focus on a project plan, either already created and unimplemented or implemented.
+- sometimes the initial prompt should infer creating a checklist of items which includes:
+  - adding and re-iterating on unit tests for any new code
+  - ensuring the global `pytest` unit test works
+  - committing your work
+- in other words, a "simple" request may generate a large plan with "boilerplate" a simple agent can execute to complete the "simple" request.
+- generally, if the request is about planning, and does not mention "implement" or "execute", then stop and consider the completed project plan a success.
+  - if the complex task (e.g. "add --verbose flag") does not mention "planning", then both create the plan and start executing the plan.
+- The plan and changes will be committed with the other contributions of the task.
+
 **MANDATORY:** Use this guide to locate project components.
 
 - **`infrastructure/`**: Terraform for AWS ECS deployment.
