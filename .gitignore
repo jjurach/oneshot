@@ -171,3 +171,4 @@ session_*.md
 # Temporary files
 *.tmp
 *.bak
+tmp/
