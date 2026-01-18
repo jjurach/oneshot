@@ -712,6 +712,8 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
                 prompt = f"{prompt}\n\n[Iteration {iteration} feedback: {reason}]"
 
         else:
+            if TEST_MODE:
+                raise ValueError(f"Auditor verdict unclear: '{verdict}'")
             print(f"❓ Auditor verdict unclear: '{verdict}'")
             if auditor_json:
                 print(f"Auditor JSON: {auditor_json}")
@@ -903,6 +905,8 @@ async def run_oneshot_async(prompt, worker_model, auditor_model, max_iterations,
                     prompt = f"{prompt}\n\n[Iteration {iteration} feedback: {reason}]"
 
             else:
+                if TEST_MODE:
+                    raise ValueError(f"Auditor verdict unclear: '{verdict}'")
                 print(f"❓ Auditor verdict unclear: '{verdict}'")
                 if auditor_json:
                     print(f"Auditor JSON: {auditor_json}")

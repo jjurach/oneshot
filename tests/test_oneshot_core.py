@@ -39,11 +39,11 @@ class TestRunOneshot:
 
         # Always return REITERATE verdict
         mock_call.side_effect = [
-            "worker output 1",
+            '{"status": "DONE", "result": "Success"}',
             '{"verdict": "REITERATE", "reason": "Try again"}',
-            "worker output 2",
+            '{"status": "DONE", "result": "Success"}',
             '{"verdict": "REITERATE", "reason": "Try again"}',
-            "worker output 3",
+            '{"status": "DONE", "result": "Success"}',
             '{"verdict": "REITERATE", "reason": "Try again"}',
         ]
 
@@ -93,14 +93,14 @@ class TestAsyncOneshot:
 
         with patch('oneshot.oneshot.call_executor_async') as mock_call:
             # Mock responses that always reiterate
-            responses = []
-            for i in range(6):
-                if i % 2 == 0:
-                    responses.append(f"worker output {i//2 + 1}")
-                else:
-                    responses.append('{"verdict": "REITERATE", "reason": "Try again"}')
-
-            mock_call.side_effect = responses
+            mock_call.side_effect = [
+                '{"status": "DONE", "result": "Success"}',
+                '{"verdict": "REITERATE", "reason": "Try again"}',
+                '{"status": "DONE", "result": "Success"}',
+                '{"verdict": "REITERATE", "reason": "Try again"}',
+                '{"status": "DONE", "result": "Success"}',
+                '{"verdict": "REITERATE", "reason": "Try again"}',
+            ]
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 success = await run_oneshot_async(
