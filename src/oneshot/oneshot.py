@@ -534,7 +534,7 @@ def find_latest_session(sessions_dir):
     """Find the latest session file."""
     session_files = sorted(
         Path(sessions_dir).glob(f"session_*.md"),
-        key=lambda p: p.stat().st_mtime,
+        key=lambda p: p.name,
         reverse=True
     )
     return session_files[0] if session_files else None
@@ -720,17 +720,12 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
         iteration += 1
         time.sleep(ITERATION_SLEEP)
 
-    msg = f"Max iterations ({max_iterations}) reached without completion."
+    msg = f"Max iterations ({max_iterations}) reached without completion. Session log retained at: {log_file}"
     print(f"\n❌ {msg}")
     log_info(msg)
 
-    # Clean up auto-generated session logs unless keep_log is True
-    if auto_generated_log and not keep_log:
-        try:
-            log_file.unlink()
-            log_info(f"Cleaned up session log: {log_file}")
-        except Exception as e:
-            log_info(f"Failed to clean up session log: {e}")
+    # Always retain session logs on failure (don't clean up)
+    # Note: keep_log parameter only affects successful completion cleanup
 
     return False
 
@@ -916,17 +911,12 @@ async def run_oneshot_async(prompt, worker_model, auditor_model, max_iterations,
             iteration += 1
             await asyncio.sleep(ITERATION_SLEEP)
 
-        msg = f"Max iterations ({max_iterations}) reached without completion."
+        msg = f"Max iterations ({max_iterations}) reached without completion. Session log retained at: {log_file}"
         print(f"\n❌ {msg}")
         log_info(msg)
 
-        # Clean up auto-generated session logs unless keep_log is True
-        if auto_generated_log and not keep_log:
-            try:
-                log_file.unlink()
-                log_info(f"Cleaned up session log: {log_file}")
-            except Exception as e:
-                log_info(f"Failed to clean up session log: {e}")
+        # Always retain session logs on failure (don't clean up)
+        # Note: keep_log parameter only affects successful completion cleanup
 
         return False
 

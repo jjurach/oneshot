@@ -2,7 +2,7 @@
 
 import pytest
 import asyncio
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, Mock
 from oneshot.task import OneshotTask, TaskResult
 from oneshot.state_machine import TaskState
 
@@ -20,6 +20,14 @@ class TestOneshotTask:
             mock_process.stdout = AsyncMock()
             mock_process.stderr = AsyncMock()
             mock_process.wait.return_value = 0
+            poll_results = [None, None, 0]
+            def poll_side_effect(*args, **kwargs):
+                if poll_results:
+                    return poll_results.pop(0)
+                return 0
+            mock_process.poll = Mock(side_effect=poll_side_effect)
+            mock_process.terminate = Mock()
+            mock_process.kill = Mock()
             mock_proc.return_value = mock_process
 
             # Mock stream reading
@@ -46,7 +54,7 @@ class TestOneshotTask:
         with patch('asyncio.create_subprocess_shell') as mock_proc:
             mock_process = AsyncMock()
             mock_process.wait = AsyncMock(return_value=1)
-            mock_process.poll = AsyncMock(return_value=1)
+            mock_process.poll = Mock(return_value=1)
             mock_proc.return_value = mock_process
 
             # Track readline calls
