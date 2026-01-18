@@ -1,5 +1,7 @@
 # Project Plan: Oneshot Asynchronous Refactor
 
+**Status: IMPLEMENTED**
+
 ## Objective
 Refactor the `oneshot` Python library from a synchronous, blocking execution model to an asynchronous, state-aware orchestration engine. The new architecture will support parallel agent executions, non-blocking I/O monitoring, and the ability to interrupt processes via state transitions.
 
