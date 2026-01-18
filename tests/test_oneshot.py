@@ -2,11 +2,15 @@
 
 import json
 import pytest
-from unittest.mock import patch, mock_open
+import asyncio
+from unittest.mock import patch, mock_open, AsyncMock
 from pathlib import Path
 import tempfile
 import sys
 import os
+
+# Enable test mode to prevent blocking subprocess calls
+os.environ['ONESHOT_TEST_MODE'] = '1'
 
 # Add src to path for testing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -23,6 +27,11 @@ from oneshot.oneshot import (
     contains_completion_indicators,
     extract_lenient_json
 )
+
+# Import async components
+from oneshot.state_machine import OneshotStateMachine, TaskState
+from oneshot.task import OneshotTask, TaskResult
+from oneshot.orchestrator import AsyncOrchestrator
 
 
 class TestExtractJson:
@@ -361,6 +370,542 @@ class TestRunOneshot:
 
         assert success is False
         assert mock_call.call_count == 6  # 3 workers + 3 auditors
+
+
+class TestStateMachine:
+    """Test the OneshotStateMachine functionality."""
+
+    def test_state_machine_initial_state(self):
+        """Test state machine starts in CREATED state."""
+        sm = OneshotStateMachine("test-task")
+        assert sm.current_state_enum == TaskState.CREATED
+
+    def test_state_machine_start_transition(self):
+        """Test CREATED -> RUNNING transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        assert sm.current_state_enum == TaskState.RUNNING
+
+    def test_state_machine_idle_detection(self):
+        """Test RUNNING -> IDLE transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.detect_silence()
+        assert sm.current_state_enum == TaskState.IDLE
+
+    def test_state_machine_activity_resume(self):
+        """Test IDLE -> RUNNING transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.detect_silence()
+        sm.detect_activity()
+        assert sm.current_state_enum == TaskState.RUNNING
+
+    def test_state_machine_completion(self):
+        """Test RUNNING -> COMPLETED transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.finish()
+        assert sm.current_state_enum == TaskState.COMPLETED
+
+    def test_state_machine_interruption(self):
+        """Test RUNNING -> INTERRUPTED transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.interrupt()
+        assert sm.current_state_enum == TaskState.INTERRUPTED
+
+    def test_state_machine_failure(self):
+        """Test any state -> FAILED transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.fail()
+        assert sm.current_state_enum == TaskState.FAILED
+
+    def test_state_machine_interrupt_from_idle(self):
+        """Test IDLE -> INTERRUPTED transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.detect_silence()
+        sm.interrupt()
+        assert sm.current_state_enum == TaskState.INTERRUPTED
+
+    def test_state_machine_idempotent_fail(self):
+        """Test that calling fail() on already failed state doesn't raise error."""
+        sm = OneshotStateMachine("test-task")
+        sm.fail()
+        assert sm.current_state_enum == TaskState.FAILED
+        # Should not raise exception
+        sm.fail()
+        assert sm.current_state_enum == TaskState.FAILED
+
+    def test_state_machine_idempotent_finish(self):
+        """Test that calling finish() on already completed state doesn't raise error."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.finish()
+        assert sm.current_state_enum == TaskState.COMPLETED
+        # Should not raise exception
+        sm.finish()
+        assert sm.current_state_enum == TaskState.COMPLETED
+
+    def test_state_machine_fail_after_complete(self):
+        """Test that task can transition from COMPLETED to FAILED."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.finish()
+        assert sm.current_state_enum == TaskState.COMPLETED
+        # Should be able to transition to failed
+        sm.fail()
+        assert sm.current_state_enum == TaskState.FAILED
+
+    def test_state_machine_complete_from_idle(self):
+        """Test IDLE -> COMPLETED transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.detect_silence()
+        assert sm.current_state_enum == TaskState.IDLE
+        sm.finish()
+        assert sm.current_state_enum == TaskState.COMPLETED
+
+    def test_state_machine_fail_from_interrupted(self):
+        """Test INTERRUPTED -> FAILED transition."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.interrupt()
+        assert sm.current_state_enum == TaskState.INTERRUPTED
+        sm.fail()
+        assert sm.current_state_enum == TaskState.FAILED
+
+    def test_state_machine_activity_tracking(self):
+        """Test activity timestamp updates."""
+        sm = OneshotStateMachine("test-task")
+        initial_activity = sm.last_activity
+        sm.update_activity()
+        # Activity should be updated (either from None to a timestamp, or to a later timestamp)
+        if initial_activity is None:
+            assert sm.last_activity is not None
+        else:
+            assert sm.last_activity >= initial_activity
+
+    def test_state_machine_can_interrupt_running(self):
+        """Test can_interrupt returns True for RUNNING state."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        assert sm.can_interrupt() is True
+
+    def test_state_machine_can_interrupt_idle(self):
+        """Test can_interrupt returns True for IDLE state."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.detect_silence()
+        assert sm.can_interrupt() is True
+
+    def test_state_machine_cannot_interrupt_completed(self):
+        """Test can_interrupt returns False for COMPLETED state."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.finish()
+        assert sm.can_interrupt() is False
+
+    def test_state_machine_is_finished_completed(self):
+        """Test is_finished returns True for COMPLETED state."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.finish()
+        assert sm.is_finished() is True
+
+    def test_state_machine_is_finished_failed(self):
+        """Test is_finished returns True for FAILED state."""
+        sm = OneshotStateMachine("test-task")
+        sm.fail()
+        assert sm.is_finished() is True
+
+    def test_state_machine_is_finished_interrupted(self):
+        """Test is_finished returns True for INTERRUPTED state."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        sm.interrupt()
+        assert sm.is_finished() is True
+
+    def test_state_machine_is_not_finished_running(self):
+        """Test is_finished returns False for RUNNING state."""
+        sm = OneshotStateMachine("test-task")
+        sm.start()
+        assert sm.is_finished() is False
+
+    def test_state_machine_multiple_transitions(self):
+        """Test a complex sequence of state transitions."""
+        sm = OneshotStateMachine("test-task")
+        assert sm.current_state_enum == TaskState.CREATED
+
+        sm.start()
+        assert sm.current_state_enum == TaskState.RUNNING
+
+        sm.detect_silence()
+        assert sm.current_state_enum == TaskState.IDLE
+
+        sm.detect_activity()
+        assert sm.current_state_enum == TaskState.RUNNING
+
+        sm.detect_silence()
+        assert sm.current_state_enum == TaskState.IDLE
+
+        sm.finish()
+        assert sm.current_state_enum == TaskState.COMPLETED
+
+
+class TestOneshotTask:
+    """Test OneshotTask async functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_task_successful_execution(self):
+        """Test successful task execution."""
+        # Mock subprocess
+        with patch('asyncio.create_subprocess_shell') as mock_proc:
+            mock_process = AsyncMock()
+            mock_process.stdout = AsyncMock()
+            mock_process.stderr = AsyncMock()
+            mock_process.wait.return_value = 0
+            mock_proc.return_value = mock_process
+
+            # Mock stream readers
+            mock_process.stdout.readline.side_effect = [b'output line\n', b'']
+            mock_process.stderr.readline.return_value = b''
+
+            task = OneshotTask("echo 'test'", idle_threshold=30)
+            result = await task.run()
+
+            assert result.success is True
+            assert result.exit_code == 0
+            assert 'output line' in result.output
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_task_failed_execution(self):
+        """Test failed task execution."""
+        with patch('asyncio.create_subprocess_shell') as mock_proc:
+            mock_process = AsyncMock()
+            mock_process.stdout = AsyncMock()
+            mock_process.stderr = AsyncMock()
+            mock_process.wait.return_value = 1
+            mock_proc.return_value = mock_process
+
+            # Mock stream readers
+            mock_process.stdout.readline.return_value = b''
+            mock_process.stderr.readline.return_value = b'error message\n'
+
+            task = OneshotTask("failing command", idle_threshold=30)
+            result = await task.run()
+
+            assert result.success is False
+            assert result.exit_code == 1
+            assert 'error message' in result.error
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_task_idle_detection(self):
+        """Test idle detection and state transitions."""
+        with patch('asyncio.create_subprocess_shell') as mock_proc:
+            mock_process = AsyncMock()
+            mock_process.poll.return_value = None  # Process still running
+            mock_process.wait.return_value = 0  # Eventually completes
+            mock_proc.return_value = mock_process
+
+            # Mock slow stream reading (no output for idle timeout)
+            async def slow_stdout_readline():
+                await asyncio.sleep(0.2)  # Small delay
+                return b''
+
+            async def slow_stderr_readline():
+                await asyncio.sleep(0.2)
+                return b''
+
+            mock_process.stdout = AsyncMock()
+            mock_process.stderr = AsyncMock()
+            mock_process.stdout.readline = AsyncMock(side_effect=slow_stdout_readline)
+            mock_process.stderr.readline = AsyncMock(side_effect=slow_stderr_readline)
+
+            task = OneshotTask("slow command", idle_threshold=0.5, activity_check_interval=0.1)
+            # Start task and wait for idle state
+            task_coro = asyncio.create_task(task.run())
+
+            # Wait for task to transition to idle
+            for _ in range(20):  # Max 2 seconds
+                await asyncio.sleep(0.1)
+                if task.state == TaskState.IDLE:
+                    # Cancel the task to cleanup
+                    task_coro.cancel()
+                    try:
+                        await task_coro
+                    except asyncio.CancelledError:
+                        pass
+                    break
+
+            # Task should have transitioned to IDLE
+            assert task.state == TaskState.IDLE
+
+            # Cancel the task
+            task.interrupt()
+            try:
+                await task_result
+            except asyncio.CancelledError:
+                pass
+
+    def test_task_interruption(self):
+        """Test task interruption."""
+        task = OneshotTask("long running command")
+        task.state_machine.start()
+
+        assert task.can_interrupt is True
+
+        task.interrupt()
+        assert task.state == TaskState.INTERRUPTED
+        assert task.can_interrupt is False
+
+
+class TestAsyncOrchestrator:
+    """Test AsyncOrchestrator functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_orchestrator_single_task(self):
+        """Test orchestrator with single task."""
+        orchestrator = AsyncOrchestrator(max_concurrent=1)
+
+        # Mock successful task execution
+        with patch('oneshot.orchestrator.OneshotTask') as mock_task_class:
+            mock_task = AsyncMock()
+            mock_task.task_id = "test-task-1"
+            mock_task.run.return_value = TaskResult(
+                task_id="test-task-1",
+                success=True,
+                output="success",
+                exit_code=0
+            )
+            mock_task_class.return_value = mock_task
+
+            results = await orchestrator.run_tasks(["echo 'test'"])
+
+            assert len(results) == 1
+            assert results["test-task-1"].success is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_orchestrator_multiple_tasks(self):
+        """Test orchestrator with multiple concurrent tasks."""
+        orchestrator = AsyncOrchestrator(max_concurrent=2)
+
+        # Mock task executions
+        with patch('oneshot.orchestrator.OneshotTask') as mock_task_class:
+            def create_mock_task(command):
+                mock_task = AsyncMock()
+                mock_task.task_id = f"task-{hash(command)}"
+                mock_task.run.return_value = TaskResult(
+                    task_id=mock_task.task_id,
+                    success=True,
+                    output=f"output for {command}",
+                    exit_code=0
+                )
+                return mock_task
+
+            mock_task_class.side_effect = [
+                create_mock_task("cmd1"),
+                create_mock_task("cmd2"),
+                create_mock_task("cmd3")
+            ]
+
+            results = await orchestrator.run_tasks(["cmd1", "cmd2", "cmd3"])
+
+            assert len(results) == 3
+            assert all(result.success for result in results.values())
+
+    def test_orchestrator_stats(self):
+        """Test orchestrator statistics."""
+        orchestrator = AsyncOrchestrator()
+        # Simulate tasks by creating mock task objects
+        from oneshot.state_machine import OneshotStateMachine, TaskState
+
+        task1 = OneshotTask("cmd1")
+        task1.state_machine = OneshotStateMachine("task-1")
+        task2 = OneshotTask("cmd2")
+        task2.state_machine = OneshotStateMachine("task-2")
+        task3 = OneshotTask("cmd3")
+        task3.state_machine = OneshotStateMachine("task-3")
+
+        orchestrator.tasks["task-1"] = task1
+        orchestrator.tasks["task-2"] = task2
+        orchestrator.tasks["task-3"] = task3
+        orchestrator.tasks_completed = 2
+        orchestrator.tasks_failed = 1
+
+        stats = orchestrator.stats
+        assert stats['completed'] == 2
+        assert stats['failed'] == 1
+        assert stats['total_tasks'] == 3
+
+
+class TestAsyncExecutor:
+    """Test async executor functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_call_executor_async_cline(self):
+        """Test async executor with cline."""
+        from oneshot.oneshot import call_executor_async
+
+        with patch('oneshot.task.OneshotTask') as mock_task_class:
+            mock_task = AsyncMock()
+            mock_task.run.return_value = TaskResult(
+                task_id="test",
+                success=True,
+                output="mock output",
+                exit_code=0
+            )
+            mock_task_class.return_value = mock_task
+
+            result = await call_executor_async("test prompt", None, "cline")
+
+            assert result == "mock output"
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_call_executor_async_claude_fallback(self):
+        """Test async executor falls back to sync for claude."""
+        from oneshot.oneshot import call_executor_async
+
+        with patch('oneshot.oneshot.call_executor') as mock_sync_call:
+            mock_sync_call.return_value = "sync result"
+
+            result = await call_executor_async("test prompt", "model", "claude")
+
+            assert result == "sync result"
+            mock_sync_call.assert_called_once()
+
+
+class TestAsyncOneshot:
+    """Test async oneshot functionality."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_run_oneshot_async_success(self):
+        """Test successful async oneshot execution."""
+        from oneshot.oneshot import run_oneshot_async
+
+        with patch('oneshot.oneshot.call_executor_async') as mock_call:
+            # Mock successful worker and auditor responses
+            worker_response = '''{"status": "DONE", "result": "Task completed"}'''
+            auditor_response = '''{"verdict": "DONE", "reason": "Perfect"}'''
+
+            mock_call.side_effect = [worker_response, auditor_response]
+
+            with patch('builtins.open', mock_open()):
+                success = await run_oneshot_async(
+                    prompt="Test task",
+                    worker_model=None,
+                    auditor_model=None,
+                    max_iterations=3,
+                    executor="cline"
+                )
+
+                assert success is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
+    async def test_run_oneshot_async_max_iterations(self):
+        """Test async oneshot reaching max iterations."""
+        from oneshot.oneshot import run_oneshot_async
+
+        with patch('oneshot.oneshot.call_executor_async') as mock_call:
+            # Mock responses that always reiterate
+            worker_response = '''{"status": "DONE"}'''
+            auditor_response = '''{"verdict": "REITERATE", "reason": "Try again"}'''
+
+            mock_call.side_effect = [worker_response, auditor_response] * 3  # 3 iterations
+
+            with patch('builtins.open', mock_open()):
+                success = await run_oneshot_async(
+                    prompt="Test task",
+                    worker_model=None,
+                    auditor_model=None,
+                    max_iterations=3,
+                    executor="cline"
+                )
+
+                assert success is False
+
+
+class TestEventSystem:
+    """Test the async event system."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)  # Should complete quickly
+    async def test_event_emission_and_subscription(self):
+        """Test basic event emission and subscription."""
+        from oneshot.events import event_emitter, EventType, EventPayload
+
+        events_received = []
+
+        async def event_handler(event: EventPayload):
+            events_received.append(event)
+
+        # Subscribe to events
+        await event_emitter.subscribe(EventType.TASK_STARTED, event_handler)
+
+        # Start emitter
+        await event_emitter.start()
+
+        # Emit an event
+        test_event = EventPayload(
+            event_type=EventType.TASK_STARTED,
+            timestamp="2023-01-01T00:00:00",
+            data={"test": "data"}
+        )
+        await event_emitter.emit(test_event)
+
+        # Wait a bit for processing
+        await asyncio.sleep(0.1)
+
+        # Check event was received
+        assert len(events_received) == 1
+        assert events_received[0].event_type == EventType.TASK_STARTED
+        assert events_received[0].data["test"] == "data"
+
+        # Clean up
+        await event_emitter.stop()
+        await event_emitter.unsubscribe(EventType.TASK_STARTED, event_handler)
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(5)  # Should complete quickly
+    async def test_task_event_convenience_function(self):
+        """Test the convenience function for emitting task events."""
+        from oneshot.events import emit_task_event, event_emitter, EventType
+
+        events_received = []
+        event_received_event = asyncio.Event()
+
+        async def event_handler(event):
+            events_received.append(event)
+            event_received_event.set()
+
+        await event_emitter.subscribe(EventType.TASK_COMPLETED, event_handler)
+        await event_emitter.start()
+
+        # Emit using convenience function
+        await emit_task_event(EventType.TASK_COMPLETED, "task-123", command="echo test")
+
+        # Wait for event to be received with timeout
+        try:
+            await asyncio.wait_for(event_received_event.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            pytest.fail("Event was not received within timeout")
+
+        assert len(events_received) == 1
+        assert events_received[0].task_id == "task-123"
+        assert events_received[0].data["command"] == "echo test"
+
+        await event_emitter.stop()
+        await event_emitter.unsubscribe(EventType.TASK_COMPLETED, event_handler)
 
 
 from oneshot.oneshot import main as oneshot_main

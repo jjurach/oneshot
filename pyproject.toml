@@ -29,7 +29,18 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = []
+dependencies = [
+    "anyio>=4.0.0",
+    "python-statemachine>=2.0.0",
+]
+
+[project.optional-dependencies]
+ui = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "rich>=13.0.0",
+    "websockets>=11.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/yourusername/oneshot"

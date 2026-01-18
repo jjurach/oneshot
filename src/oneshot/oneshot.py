@@ -4,19 +4,40 @@ Oneshot - Autonomous task completion with auditor validation
 """
 
 import argparse
+import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Dict, Any
+
+# ============================================================================
+# TEST CONFIGURATION - Prevent blocking subprocess calls in tests
+# ============================================================================
+
+# Set ONESHOT_TEST_MODE=1 to prevent blocking subprocess calls
+TEST_MODE = os.environ.get('ONESHOT_TEST_MODE', '0') == '1'
+
+def _check_test_mode_blocking():
+    """Raise exception if test mode is enabled and blocking call is attempted."""
+    if TEST_MODE:
+        import traceback
+        stack = ''.join(traceback.format_stack())
+        raise RuntimeError(
+            f"BLOCKED: Subprocess call attempted in test mode!\n"
+            f"All subprocess.run() calls should be mocked in tests.\n"
+            f"Stack trace:\n{stack}"
+        )
 
 # ============================================================================
 # LOGGING CONFIGURATION
 # ============================================================================
 
-VERBOSITY = 0  # 0=default, 1=verbose, 2=debug
+VERBOSITY = 2  # 0=default, 1=verbose, 2=debug (set to 2 for debugging)
 
 def log_info(msg):
     """Default informational message to stderr."""
@@ -279,7 +300,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
 
             log_debug(f"Command: {' '.join(cmd)}")
 
-
+            _check_test_mode_blocking()
             result = subprocess.run(
 
 
@@ -306,7 +327,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
 
             log_debug(f"Command: {' '.join(cmd)}")
 
-
+            _check_test_mode_blocking()
             result = subprocess.run(
 
 
@@ -364,6 +385,71 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
         return f"ERROR: {e}"
 
 
+async def call_executor_async(prompt: str, model: Optional[str], executor: str = "claude",
+                            initial_timeout: float = 300, max_timeout: float = 3600,
+                            activity_interval: float = 30) -> str:
+    """
+    Async version of call_executor using OneshotTask for better process management.
+
+    Args:
+        prompt: The prompt to send to the executor
+        model: Model name (ignored for cline executor)
+        executor: Either 'claude' or 'cline'
+        initial_timeout: Initial timeout before activity monitoring
+        max_timeout: Maximum timeout with activity monitoring
+        activity_interval: How often to check for activity
+
+    Returns:
+        The executor's output as a string
+    """
+    from .task import OneshotTask
+    import shlex
+
+    try:
+        log_debug(f"Calling {executor} asynchronously with model: {model}")
+        log_debug(f"Prompt length: {len(prompt)} chars")
+        log_debug(f"Timeout config: initial={initial_timeout}s, max={max_timeout}s, activity_check={activity_interval}s")
+
+        # Build command
+        if executor == "cline":
+            # Properly escape the prompt for shell execution
+            cmd = f'cline --yolo --no-interactive --oneshot {shlex.quote(prompt)}'
+            log_debug(f"Command: {cmd}")
+        else:  # claude
+            # For claude, we need to handle stdin input
+            cmd = f'claude -p --model {model} --dangerously-skip-permissions'
+
+        # Create task with appropriate timeouts
+        # Use max_timeout as idle threshold since OneshotTask handles activity monitoring
+        task = OneshotTask(
+            command=cmd,
+            idle_threshold=max_timeout,
+            activity_check_interval=activity_interval,
+        )
+
+        # For claude, we need to handle stdin
+        if executor != "cline":
+            # This is more complex - we'd need to modify OneshotTask to handle stdin
+            # For now, fall back to sync version
+            log_debug("Falling back to sync executor for claude with stdin")
+            return call_executor(prompt, model, executor, initial_timeout, max_timeout, activity_interval)
+
+        # Run the task
+        result = await task.run()
+
+        if result.success:
+            log_verbose(f"Async {executor} call completed, output length: {len(result.output)} chars")
+            return result.output
+        else:
+            error_msg = result.error or f"Task failed with exit code {result.exit_code}"
+            log_info(f"ERROR: Async {executor} call failed: {error_msg}")
+            return f"ERROR: {error_msg}"
+
+    except Exception as e:
+        log_info(f"ERROR in async executor: {e}")
+        return f"ERROR: {e}"
+
+
 def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval):
     """Adaptive timeout with activity monitoring for long-running tasks."""
     import threading
@@ -412,6 +498,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
 
         # Run the process with extended timeout
         if executor == "cline":
+            _check_test_mode_blocking()
             result = subprocess.run(
                 cmd,
                 text=True,
@@ -419,6 +506,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
                 timeout=max_timeout
             )
         else:
+            _check_test_mode_blocking()
             result = subprocess.run(
                 cmd,
                 input=prompt,
@@ -645,6 +733,206 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
             log_info(f"Failed to clean up session log: {e}")
 
     return False
+
+
+async def run_oneshot_async(prompt, worker_model, auditor_model, max_iterations,
+                          executor="claude", resume=False, session_file=None,
+                          session_log=None, keep_log=False, initial_timeout=300,
+                          max_timeout=3600, activity_interval=30):
+    """
+    Async version of run_oneshot using OneshotTask for better process management.
+    """
+    from .orchestrator import AsyncOrchestrator
+
+    log_info(f"Starting async oneshot: worker={worker_model}, auditor={auditor_model}, executor={executor}")
+    log_debug(f"Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"Prompt: {prompt}")
+
+    # Determine session file
+    auto_generated_log = False
+    if session_log:
+        log_file = Path(session_log)
+        if log_file.exists():
+            session_context = read_session_context(log_file)
+            iteration = count_iterations(log_file) + 1
+            print(f"📂 Resuming session: {log_file}")
+            print(f"   Previous iterations: {iteration - 1}")
+            log_verbose(f"Session context length: {len(session_context) if session_context else 0} chars")
+            mode = 'a'
+        else:
+            session_context = None
+            iteration = 1
+            mode = 'w'
+            log_info(f"Creating new session: {log_file.name}")
+            with open(log_file, mode) as f:
+                f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
+    elif resume and session_file:
+        log_file = session_file
+        session_context = read_session_context(log_file)
+        iteration = count_iterations(log_file) + 1
+        print(f"📂 Resuming session: {log_file}")
+        print(f"   Previous iterations: {iteration - 1}")
+        log_verbose(f"Session context length: {len(session_context) if session_context else 0} chars")
+        mode = 'a'
+    else:
+        auto_generated_log = True
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = SESSION_DIR / f"session_{timestamp}.md"
+        session_context = None
+        iteration = 1
+        mode = 'w'
+        log_info(f"Creating new session: {log_file.name}")
+        log_verbose(f"Session directory: {SESSION_DIR}")
+        with open(log_file, mode) as f:
+            f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
+
+    # Create orchestrator for concurrent task execution
+    orchestrator = AsyncOrchestrator(
+        max_concurrent=2,  # Allow concurrent worker and auditor calls
+        global_idle_threshold=max_timeout,
+        heartbeat_interval=activity_interval,
+    )
+
+    try:
+        while iteration <= max_iterations:
+            print(f"\n--- 🤖 Worker: Iteration {iteration} ---")
+            log_info(f"Iteration {iteration}/{max_iterations}")
+
+            # 1. Execute the Worker asynchronously
+            log_verbose(f"Building worker prompt (prefix + task)")
+            full_prompt = WORKER_PREFIX + prompt
+            log_debug(f"Full prompt length: {len(full_prompt)} chars")
+            dump_buffer("Worker Prompt", full_prompt, max_lines=10)
+
+            log_verbose(f"Calling worker model: {worker_model}")
+
+            # Use async executor
+            worker_output = await call_executor_async(
+                full_prompt, worker_model, executor=executor,
+                initial_timeout=initial_timeout, max_timeout=max_timeout,
+                activity_interval=activity_interval
+            )
+            dump_buffer("Worker Output", worker_output)
+            print(worker_output)
+
+            # Log worker output
+            log_verbose("Logging worker output to session file")
+            with open(log_file, 'a') as f:
+                f.write(f"\n## Iteration {iteration} - Worker Output\n\n")
+                f.write(strip_ansi(worker_output) + "\n")
+
+            # 2. Summary Stats
+            with open(log_file, 'r') as f:
+                log_lines = len(f.readlines())
+            print(f"Log Size: {log_lines} lines.")
+            print("Last worker output:")
+            print('\n'.join(worker_output.split('\n')[-3:]))
+            log_debug(f"Session file size: {log_lines} lines")
+
+            # 3. Success Auditor Step
+            print("\n--- ⚖️ Auditor: Checking Progress ---")
+            log_verbose("Extracting JSON from worker output (lenient parsing)")
+
+            # Extract JSON from worker output using lenient parsing
+            worker_json, extraction_method = extract_lenient_json(worker_output)
+            log_info(f"JSON extraction method: {extraction_method}")
+            dump_buffer("Extracted Worker JSON", worker_json or "NO JSON FOUND", max_lines=15)
+
+            if not worker_json:
+                print(f"❌ No acceptable response found in worker output (method: {extraction_method})")
+                print("Worker said:", worker_output.split('\n')[:5])
+                log_info(f"No acceptable response extracted (method: {extraction_method}), skipping auditor")
+                iteration += 1
+                await asyncio.sleep(ITERATION_SLEEP)
+                continue
+
+            # Real Auditor Call (async)
+            log_verbose(f"Preparing auditor prompt (extraction method: {extraction_method})")
+            if extraction_method == "strict":
+                audit_input = f"Original Task: {prompt}\n\nEvaluate this valid JSON response:\n\n{worker_json}"
+            else:
+                audit_input = f"Original Task: {prompt}\n\nEvaluate this response (parsed with {extraction_method} method):\n\n{worker_output}\n\nParsed as: {worker_json}"
+            full_auditor_prompt = AUDITOR_PROMPT + "\n\n" + audit_input
+            log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
+
+            log_verbose(f"Calling auditor model: {auditor_model}")
+            audit_response = await call_executor_async(
+                full_auditor_prompt, auditor_model, executor=executor,
+                initial_timeout=initial_timeout, max_timeout=max_timeout,
+                activity_interval=activity_interval
+            )
+            dump_buffer("Auditor Response", audit_response)
+
+            # Log auditor response
+            log_verbose("Logging auditor response to session file")
+            with open(log_file, 'a') as f:
+                f.write(f"\n### Iteration {iteration} - Auditor Response\n\n")
+                f.write(strip_ansi(audit_response) + "\n")
+
+            # Extract JSON from auditor response
+            log_verbose("Extracting JSON from auditor response")
+            auditor_json = extract_json(audit_response)
+            dump_buffer("Extracted Auditor JSON", auditor_json or "NO JSON FOUND", max_lines=10)
+
+            if auditor_json:
+                verdict, reason, advice = parse_json_verdict(auditor_json)
+                log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
+            else:
+                verdict, reason, advice = None, None, None
+                log_info("Could not extract JSON from auditor response")
+
+            print(f"Auditor verdict: {verdict}")
+            if reason:
+                print(f"Reason: {reason}")
+
+            # Handle verdict
+            if verdict and verdict.upper() == "DONE":
+                print("✅ Auditor confirmed: DONE.")
+                log_info(f"Task completed successfully in {iteration} iteration(s)")
+                with open(log_file, 'a') as f:
+                    f.write("\n✅ Task completed successfully!\n")
+
+                # Clean up auto-generated session logs unless keep_log is True or session_log was specified
+                if auto_generated_log and not keep_log:
+                    try:
+                        log_file.unlink()
+                        log_info(f"Cleaned up session log: {log_file}")
+                    except Exception as e:
+                        log_info(f"Failed to clean up session log: {e}")
+
+                return True
+
+            elif verdict and verdict.upper() == "REITERATE":
+                print("🔄 Auditor suggested: REITERATE")
+                if reason:
+                    print(f"Issue: {reason}")
+                    prompt = f"{prompt}\n\n[Iteration {iteration} feedback: {reason}]"
+
+            else:
+                print(f"❓ Auditor verdict unclear: '{verdict}'")
+                if auditor_json:
+                    print(f"Auditor JSON: {auditor_json}")
+                print("Continuing anyway...")
+
+            iteration += 1
+            await asyncio.sleep(ITERATION_SLEEP)
+
+        msg = f"Max iterations ({max_iterations}) reached without completion."
+        print(f"\n❌ {msg}")
+        log_info(msg)
+
+        # Clean up auto-generated session logs unless keep_log is True
+        if auto_generated_log and not keep_log:
+            try:
+                log_file.unlink()
+                log_info(f"Cleaned up session log: {log_file}")
+            except Exception as e:
+                log_info(f"Failed to clean up session log: {e}")
+
+        return False
+
+    except Exception as e:
+        log_info(f"Async oneshot error: {e}")
+        return False
 
 
 def count_iterations(log_file):
