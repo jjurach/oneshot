@@ -13,7 +13,8 @@ class TestRunOneshot:
 
     @patch('oneshot.oneshot.call_executor')
     @patch('oneshot.oneshot.count_iterations')
-    def test_run_oneshot_success_on_first_iteration(self, mock_count, mock_call):
+    @patch('builtins.print')
+    def test_run_oneshot_success_on_first_iteration(self, mock_print, mock_count, mock_call):
         """Test successful completion on first iteration."""
         mock_count.return_value = 0
         mock_call.side_effect = [
@@ -33,7 +34,8 @@ class TestRunOneshot:
 
     @patch('oneshot.oneshot.call_executor')
     @patch('oneshot.oneshot.count_iterations')
-    def test_run_oneshot_max_iterations_reached(self, mock_count, mock_call):
+    @patch('builtins.print')
+    def test_run_oneshot_max_iterations_reached(self, mock_print, mock_count, mock_call):
         """Test max iterations reached."""
         mock_count.return_value = 0
 
@@ -62,7 +64,8 @@ class TestAsyncOneshot:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(10)
-    async def test_run_oneshot_async_success(self):
+    @patch('builtins.print')
+    async def test_run_oneshot_async_success(self, mock_print):
         """Test successful async oneshot execution."""
         from oneshot.oneshot import run_oneshot_async
 
@@ -87,7 +90,8 @@ class TestAsyncOneshot:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(10)
-    async def test_run_oneshot_async_max_iterations(self):
+    @patch('builtins.print')
+    async def test_run_oneshot_async_max_iterations(self, mock_print):
         """Test async oneshot reaching max iterations."""
         from oneshot.oneshot import run_oneshot_async
 

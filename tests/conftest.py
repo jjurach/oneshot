@@ -1,11 +1,8 @@
-"""Shared test configuration and fixtures."""
+import pytest
+from unittest.mock import patch
 
-import os
-import sys
-from pathlib import Path
-
-# Enable test mode to prevent blocking subprocess calls
-os.environ['ONESHOT_TEST_MODE'] = '1'
-
-# Add src to path for testing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+@pytest.fixture(autouse=True)
+def suppress_logging():
+    """Suppress logging from the application during tests."""
+    with patch('oneshot.oneshot.VERBOSITY', -1):
+        yield
