@@ -17,15 +17,17 @@ class TestRunOneshot:
         """Test successful completion on first iteration."""
         mock_count.return_value = 0
         mock_call.side_effect = [
-            "worker output",
-            '{"verdict": "DONE", "reason": "Success"}'
+            "worker output",  # First worker call, no JSON
+            '{"status": "DONE", "result": "Success"}',  # Second worker call, with JSON
+            '{"verdict": "DONE", "reason": "Success"}'   # Auditor call
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             success = run_oneshot(
                 "test task",
-                max_iterations=3,
-                working_directory=tmpdir
+                worker_model="test_worker_model",
+                auditor_model="test_auditor_model",
+                max_iterations=3
             )
             assert success is True
 
@@ -48,8 +50,9 @@ class TestRunOneshot:
         with tempfile.TemporaryDirectory() as tmpdir:
             success = run_oneshot(
                 "test task",
-                max_iterations=3,
-                working_directory=tmpdir
+                worker_model="test_worker_model",
+                auditor_model="test_auditor_model",
+                max_iterations=3
             )
             assert success is False
 
@@ -67,14 +70,16 @@ class TestAsyncOneshot:
             # Mock successful worker and auditor responses
             mock_call.side_effect = [
                 "worker output",
+                '{"status": "DONE", "result": "Success"}',
                 '{"verdict": "DONE", "reason": "Success"}'
             ]
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 success = await run_oneshot_async(
                     "test task",
+                    worker_model="test_worker_model",
+                    auditor_model="test_auditor_model",
                     max_iterations=3,
-                    working_directory=tmpdir,
                     executor="cline"
                 )
 
@@ -100,8 +105,9 @@ class TestAsyncOneshot:
             with tempfile.TemporaryDirectory() as tmpdir:
                 success = await run_oneshot_async(
                     "test task",
+                    worker_model="test_worker_model",
+                    auditor_model="test_auditor_model",
                     max_iterations=3,
-                    working_directory=tmpdir,
                     executor="cline"
                 )
 

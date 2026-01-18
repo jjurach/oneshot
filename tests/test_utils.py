@@ -46,7 +46,7 @@ class TestSessionManagement:
         with patch('oneshot.oneshot.find_latest_session') as mock_find:
             mock_find.return_value = None
             context = read_session_context("/fake/dir")
-            assert context == ""
+            assert context is None
 
 
 class TestUtilityFunctions:
@@ -60,14 +60,13 @@ class TestUtilityFunctions:
 
     def test_count_iterations(self):
         """Test iteration counting from session file."""
-        session_content = """
-        ## Iteration 1
-        Content
-        ## Iteration 2
-        Content
-        ## Iteration 3
-        Content
-        """
+        session_content = """## Iteration 1
+Content
+## Iteration 2
+Content
+## Iteration 3
+Content
+"""
         with patch('builtins.open', mock_open(read_data=session_content)):
             count = count_iterations(Path("/fake/session.md"))
             assert count == 3

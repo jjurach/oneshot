@@ -4,43 +4,43 @@
 Establish a complete infrastructure setup for deploying Oneshot as a containerized, scalable application on AWS ECS using Terraform. This will enable reliable, production-ready execution of the asynchronous task orchestration system with proper monitoring, logging, and configuration management.
 
 ## Implementation Steps
-1. **Set up AWS Infrastructure with Terraform**
+1. **Set up AWS Infrastructure with Terraform** (Pending)
    - Create VPC with public/private subnets across multiple availability zones
    - Configure security groups for ECS tasks, load balancers, and database access
    - Set up ECS cluster with Fargate launch type for serverless container execution
    - Create IAM roles and policies for ECS task execution and service access
 
-2. **Implement Containerization**
+2. **Implement Containerization** (Pending)
    - Create optimized Dockerfile with multi-stage build for Python application
    - Configure proper Python environment and dependencies
    - Set up non-root user and security hardening
    - Add health check endpoints for container monitoring
 
-3. **Configure Application Deployment**
+3. **Configure Application Deployment** (Pending)
    - Create ECS task definitions with appropriate CPU/memory allocations
    - Set up ECS services with auto-scaling policies
    - Configure Application Load Balancer for web UI access (if UI integration is enabled)
    - Implement service discovery for inter-service communication
 
-4. **Set up CI/CD Pipeline**
+4. **Set up CI/CD Pipeline** (Pending)
    - Create GitHub Actions workflow for automated testing and building
    - Configure AWS CodePipeline for deployment automation
    - Implement blue/green deployment strategy for zero-downtime updates
    - Add automated testing stages (unit, integration, security scans)
 
-5. **Implement Monitoring and Observability**
+5. **Implement Monitoring and Observability** (Pending)
    - Configure CloudWatch Logs for centralized logging
    - Set up CloudWatch Metrics and alarms for system health
    - Integrate AWS X-Ray for distributed tracing (if needed)
    - Create dashboards for monitoring task execution and system performance
 
-6. **Add Configuration Management**
+6. **Add Configuration Management** (Pending)
    - Use AWS Systems Manager Parameter Store for sensitive configuration
    - Implement environment-specific configurations (dev/staging/prod)
    - Configure secrets management for API keys and credentials
    - Add configuration validation and drift detection
 
-7. **Update Documentation and Runbooks**
+7. **Update Documentation and Runbooks** (Pending)
    - Create deployment documentation with step-by-step instructions
    - Document infrastructure architecture and components
    - Add troubleshooting guides and operational runbooks

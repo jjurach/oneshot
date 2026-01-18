@@ -5,42 +5,42 @@ Implement a SQLite-based persistence layer that saves task states, state transit
 
 ## Implementation Steps
 
-1. **Design Database Schema**
+1. **Design Database Schema** (Pending)
    - Create SQLite tables for: `tasks` (task metadata), `task_states` (state transition history), `log_fragments` (captured output chunks)
    - Define indexes for efficient querying by task_id, timestamps, and state
    - Implement database migration system using alembic or similar
 
-2. **Create Persistence Manager Class**
+2. **Create Persistence Manager Class** (Pending)
    - Build `PersistenceManager` class with async methods for database operations
    - Implement connection pooling and transaction management
    - Add methods for saving/loading task states and log data
 
-3. **Integrate Persistence into State Machine**
+3. **Integrate Persistence into State Machine** (Pending)
    - Modify `OneshotStateMachine` to emit persistence events on state transitions
    - Add async persistence calls to transition methods without blocking
    - Implement state recovery logic to restore machine state from database
 
-4. **Update AsyncOrchestrator for Persistence**
+4. **Update AsyncOrchestrator for Persistence** (Pending)
    - Add `PersistenceManager` instance to orchestrator initialization
    - Implement task recovery on startup: scan database for incomplete tasks and resume them
    - Add periodic log flushing to prevent memory bloat during long-running tasks
 
-5. **Implement Log Fragment Storage**
+5. **Implement Log Fragment Storage** (Pending)
    - Modify stream reading to batch and persist log chunks periodically
    - Add log retrieval methods for task history queries
    - Implement log rotation/cleanup for old entries
 
-6. **Add Crash Recovery Logic**
+6. **Add Crash Recovery Logic** (Pending)
    - Create recovery manager that identifies tasks in RUNNING/IDLE states on startup
    - Implement task resurrection: recreate process handles and attach to event loops
    - Handle edge cases like missing processes or corrupted state data
 
-7. **Update CLI and Configuration**
+7. **Update CLI and Configuration** (Pending)
    - Add CLI flags for enabling/disabling persistence
    - Configuration options for database path, retention policies, and recovery behavior
    - Environment variables for persistence settings
 
-8. **Add Persistence Tests**
+8. **Add Persistence Tests** (Pending)
    - Unit tests for database operations and schema integrity
    - Integration tests for state persistence and recovery
    - Test crash simulation and recovery scenarios

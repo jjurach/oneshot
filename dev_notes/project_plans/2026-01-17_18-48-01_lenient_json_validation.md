@@ -10,12 +10,12 @@ Address "No valid JSON found in worker output" errors by implementing lenient JS
 
 ## Implementation Steps
 
-### 1. Analyze Current JSON Validation Logic
+### 1. Analyze Current JSON Validation Logic (Completed)
 - Review `extract_json()` function behavior with malformed JSON
 - Document current strict validation requirements
 - Identify common failure patterns (missing quotes, trailing commas, etc.)
 
-### 2. Design Lenient JSON Parser
+### 2. Design Lenient JSON Parser (In Progress)
 - Create `extract_lenient_json()` function that attempts multiple parsing strategies:
   - Standard JSON parsing first
   - Fix common JSON issues (missing quotes, trailing commas)
@@ -23,21 +23,21 @@ Address "No valid JSON found in worker output" errors by implementing lenient JS
   - Look for completion indicators in plain text
 - Implement fallback parsing for responses with clear "DONE"/"success" sentiment
 
-### 3. Update Auditor Prompt for Leniency
+### 3. Update Auditor Prompt for Leniency (In Progress)
 - Modify AUDITOR_PROMPT to accept non-JSON responses
 - Add instructions to look for completion indicators in plain text
 - Trust worker judgment even with malformed responses
 
-### 4. Modify Worker Prompt (Optional)
+### 4. Modify Worker Prompt (Optional) (In Progress)
 - Update WORKER_PREFIX to encourage but not require valid JSON
 - Add guidance for cheaper models on completion indicators
 
-### 5. Update Validation Logic in run_oneshot
+### 5. Update Validation Logic in run_oneshot (In Progress)
 - Replace strict JSON requirement with lenient validation
 - Only skip auditor if response shows clear failure/incompletion
 - Log validation method used (strict JSON vs lenient parsing)
 
-### 6. Update Tests
+### 6. Update Tests (Pending)
 - Add tests for lenient JSON parsing scenarios
 - Test malformed JSON with completion indicators
 - Ensure backward compatibility with valid JSON responses

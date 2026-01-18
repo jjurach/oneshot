@@ -533,7 +533,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
 def find_latest_session(sessions_dir):
     """Find the latest session file."""
     session_files = sorted(
-        sessions_dir.glob(f"session_*.md"),
+        Path(sessions_dir).glob(f"session_*.md"),
         key=lambda p: p.stat().st_mtime,
         reverse=True
     )

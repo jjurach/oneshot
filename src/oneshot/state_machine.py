@@ -74,8 +74,9 @@ class OneshotStateMachine(StateMachine):
         try:
             self.last_activity = asyncio.get_running_loop().time()
         except RuntimeError:
-            # No running event loop, use None
-            self.last_activity = None
+            # No running event loop, use time module
+            import time
+            self.last_activity = time.time()
 
     def update_activity(self):
         """Update the last activity timestamp."""

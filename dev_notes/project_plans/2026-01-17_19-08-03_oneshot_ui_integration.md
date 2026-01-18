@@ -5,17 +5,17 @@ Implement a user interface layer that exposes the asynchronous state machine tra
 
 ## Implementation Steps
 
-1. **Design Event System Architecture**
+1. **Design Event System Architecture** (Completed)
    - Create an `AsyncEventEmitter` class using `asyncio.Queue` for broadcasting state transitions
    - Define event types: `task_created`, `task_started`, `task_idle`, `task_interrupted`, `task_completed`, `task_failed`
    - Implement event payload structure with task metadata (ID, command, timestamps, current state)
 
-2. **Integrate Event Emission into State Machine**
+2. **Integrate Event Emission into State Machine** (In Progress)
    - Modify `OneshotStateMachine` to emit events on all state transitions
    - Add event emission to transition methods (`start`, `detect_silence`, `interrupt`, etc.)
    - Ensure events are emitted asynchronously without blocking state transitions
 
-3. **Create Web Dashboard Interface**
+3. **Create Web Dashboard Interface** (Completed)
    - Set up FastAPI application for REST API endpoints
    - Implement WebSocket endpoint for real-time event streaming
    - Create HTML/CSS/JavaScript dashboard showing:
@@ -24,23 +24,23 @@ Implement a user interface layer that exposes the asynchronous state machine tra
      - Interrupt controls per task
      - System health metrics
 
-4. **Implement TUI (Terminal User Interface)**
+4. **Implement TUI (Terminal User Interface)** (Completed)
    - Use `rich` library for terminal-based dashboard
    - Create interactive panels showing task status
    - Implement keyboard shortcuts for task interruption
    - Add real-time updates using asyncio event loops
 
-5. **Update AsyncOrchestrator for UI Integration**
+5. **Update AsyncOrchestrator for UI Integration** (In Progress)
    - Add event emitter instance to orchestrator
    - Connect task state machines to central event system
    - Implement UI command handling (interrupt requests from dashboard)
 
-6. **Add Configuration Options**
+6. **Add Configuration Options** (Pending)
    - CLI flags to enable/disable UI components
    - Configuration for web server port and TUI refresh rates
    - Environment variables for UI settings
 
-7. **Update Tests**
+7. **Update Tests** (In Progress)
    - Add tests for event emission correctness
    - Test WebSocket/real-time updates
    - Mock UI components for integration testing

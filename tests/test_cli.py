@@ -1,66 +1,37 @@
-"""Tests for CLI interface."""
+"""Tests for CLI main function."""
 
 import pytest
-from unittest.mock import patch
 import sys
-import os
-
-# Add src to path for testing
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from cli.oneshot_cli import main
+from unittest.mock import patch
+from oneshot.oneshot import main as oneshot_main
 
 
-class TestCLI:
-    """Test CLI interface."""
+class TestMain:
+    """Test CLI entry point."""
 
-    @patch('oneshot.oneshot.call_executor')
-    @patch('oneshot.oneshot.time.sleep')
-    def test_cli_calls_main_success(self, mock_sleep, mock_call):
-        """Test that CLI calls the main function successfully."""
-        # Mock successful responses
-        worker_response = '''Output
-{
-  "status": "DONE",
-  "result": "Success",
-  "confidence": "high",
-  "validation": "Good",
-  "execution_proof": null
-}'''
-        auditor_response = '''Audit
-{
-  "verdict": "DONE",
-  "reason": "Perfect"
-}'''
+    @patch('sys.argv', ['oneshot', 'task description', '--executor', 'cline', '--worker-model', 'some-model'])
+    def test_main_cline_with_model_aborts(self):
+        """Test that cline with model parameter aborts."""
+        with pytest.raises(SystemExit) as exc_info:
+            oneshot_main()
+        assert exc_info.value.code == 1
 
-        mock_call.side_effect = [worker_response, auditor_response]
+    @patch('sys.argv', ['oneshot', 'task description', '--executor', 'cline'])
+    @patch('oneshot.oneshot.run_oneshot')
+    def test_main_cline_without_model_succeeds(self, mock_run):
+        """Test cline without model succeeds."""
+        mock_run.return_value = True
+        with pytest.raises(SystemExit) as e:
+            oneshot_main()
+        assert e.value.code == 0
+        mock_run.assert_called_once()
 
-        test_args = ['oneshot_cli.py', 'test prompt']
-        with patch.object(sys, 'argv', test_args):
-            with patch('sys.exit') as mock_exit:
-                main()
-                mock_exit.assert_called_once_with(0)
-
-    @patch('oneshot.oneshot.call_executor')
-    @patch('oneshot.oneshot.time.sleep')
-    def test_cli_calls_main_failure(self, mock_sleep, mock_call):
-        """Test that CLI exits when main fails."""
-        # Mock failure responses
-        worker_response = '''Output
-{
-  "status": "DONE"
-}'''
-        auditor_response = '''Audit
-{
-  "verdict": "REITERATE",
-  "reason": "Try again"
-}'''
-
-        # Mock 5 iterations of failure (max_iterations=5)
-        mock_call.side_effect = [worker_response, auditor_response] * 5
-
-        test_args = ['oneshot_cli.py', '--max-iterations', '3', 'test prompt']
-        with patch.object(sys, 'argv', test_args):
-            with patch('sys.exit') as mock_exit:
-                main()
-                mock_exit.assert_called_once_with(1)
+    @patch('sys.argv', ['oneshot', 'task description', '--executor', 'claude', '--worker-model', 'some-model'])
+    @patch('oneshot.oneshot.run_oneshot')
+    def test_main_claude_with_model_succeeds(self, mock_run):
+        """Test claude with model succeeds."""
+        mock_run.return_value = True
+        with pytest.raises(SystemExit) as e:
+            oneshot_main()
+        assert e.value.code == 0
+        mock_run.assert_called_once()

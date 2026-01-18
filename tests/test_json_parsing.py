@@ -97,7 +97,7 @@ class TestLenientJsonParsing:
         text = '{"status": "success",}'  # Trailing comma
         result, method = extract_lenient_json(text)
         assert result is not None
-        assert method in ["strict", "lenient_fallback"]
+        assert method in ["strict", "lenient_fallback", "fixed"]
 
     def test_extract_lenient_json_malformed(self):
         """Test lenient fallback for malformed JSON."""

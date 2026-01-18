@@ -5,12 +5,12 @@ Address "cline call timed out" errors by implementing adaptive timeout threshold
 
 ## Implementation Steps
 
-### 1. Analyze Current Timeout Implementation
+### 1. Analyze Current Timeout Implementation (Completed)
 - Review `call_executor` function in `src/oneshot/oneshot.py`
 - Document current hardcoded 120-second timeout for both claude and cline executors
 - Understand subprocess execution patterns and output capture
 
-### 2. Design Adaptive Timeout System
+### 2. Design Adaptive Timeout System (In Progress)
 - Implement configurable timeout parameters:
   - Initial timeout: 5 minutes (300 seconds)
   - Activity extension: up to 1 hour (3600 seconds) if streaming detected
@@ -18,25 +18,25 @@ Address "cline call timed out" errors by implementing adaptive timeout threshold
 - Add activity monitoring for "[streaming]" patterns in output
 - Create new timeout configuration options
 
-### 3. Modify call_executor Function
+### 3. Modify call_executor Function (In Progress)
 - Replace hardcoded timeout with adaptive timeout logic
 - Implement streaming output monitoring
 - Add timeout configuration parameters
 - Maintain backward compatibility with existing behavior
 
-### 4. Add Command Line Configuration
+### 4. Add Command Line Configuration (In Progress)
 - Add new CLI arguments for timeout configuration:
   - `--initial-timeout`: Initial timeout before activity check (default: 300s)
   - `--max-timeout`: Maximum allowed timeout with activity (default: 3600s)
   - `--activity-interval`: How often to check for activity (default: 30s)
 - Update argument parsing in main()
 
-### 5. Update Tests
+### 5. Update Tests (Pending)
 - Modify existing timeout tests in `tests/test_oneshot.py`
 - Add new tests for adaptive timeout behavior
 - Test activity monitoring scenarios
 
-### 6. Update Documentation
+### 6. Update Documentation (Pending)
 - Update README.md with new timeout options
 - Document behavior changes for long-running tasks
 
