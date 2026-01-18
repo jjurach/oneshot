@@ -147,6 +147,91 @@ oneshot --worker-provider executor \
         "Task description"
 ```
 
+## Configuration
+
+Oneshot supports configuration files to set default values for command-line options. Create a configuration file at `~/.oneshot.json` to customize default settings.
+
+### Configuration File
+
+Create `~/.oneshot.json` with your preferred defaults:
+
+```json
+{
+  "_comment": "Oneshot configuration file - place this at ~/.oneshot.json",
+  "_note": "Command-line options override these defaults",
+  "executor": "claude",
+  "max_iterations": 5,
+  "worker_model": "claude-3-5-sonnet-20241022",
+  "auditor_model": "claude-3-5-haiku-20241022",
+  "initial_timeout": 300,
+  "max_timeout": 3600,
+  "activity_interval": 30,
+  "max_concurrent": 5,
+  "idle_threshold": 60,
+  "heartbeat_interval": 10,
+  "web_port": 8000,
+  "tui_refresh": 1.0
+}
+```
+
+### Configuration Options
+
+| Option | Type | Description | Default |
+|--------|------|-------------|---------|
+| `executor` | string | Executor to use: 'claude' or 'cline' | "cline" |
+| `max_iterations` | integer | Maximum number of iterations | 5 |
+| `worker_model` | string/null | Model for worker (null for executor defaults) | null |
+| `auditor_model` | string/null | Model for auditor (null for executor defaults) | null |
+| `initial_timeout` | integer | Initial timeout in seconds before activity monitoring | 300 |
+| `max_timeout` | integer | Maximum timeout in seconds with activity monitoring | 3600 |
+| `activity_interval` | integer | Activity check interval in seconds | 30 |
+| `max_concurrent` | integer | Maximum concurrent tasks in async mode | 5 |
+| `idle_threshold` | integer | Global idle threshold in seconds for async orchestrator | 60 |
+| `heartbeat_interval` | integer | Heartbeat check interval in seconds for async orchestrator | 10 |
+| `web_port` | integer | Port for web dashboard | 8000 |
+| `tui_refresh` | float | TUI refresh rate in seconds | 1.0 |
+
+### Precedence Rules
+
+Configuration values are applied in this order (later values override earlier ones):
+
+1. **Built-in defaults** (hardcoded in the code)
+2. **Configuration file** (`~/.oneshot.json`)
+3. **Command-line arguments** (highest precedence)
+
+### Example Usage
+
+Set Claude as your default executor:
+
+```bash
+echo '{"executor": "claude"}' > ~/.oneshot.json
+oneshot "What is the capital of France?"
+# Uses Claude executor by default, no need to specify --executor claude
+```
+
+Use different models for worker and auditor:
+
+```bash
+cat > ~/.oneshot.json << 'EOF'
+{
+  "executor": "claude",
+  "worker_model": "claude-3-5-sonnet-20241022",
+  "auditor_model": "claude-3-5-haiku-20241022"
+}
+EOF
+
+oneshot "Complex task"
+# Worker uses Sonnet, auditor uses Haiku
+```
+
+### Show Configuration
+
+View the example configuration file:
+
+```bash
+oneshot --show-config
+```
+
 ### Command Line Options
 
 - `prompt`: The task to complete (required)
@@ -163,6 +248,7 @@ oneshot --worker-provider executor \
 - `--verbose`: Enable verbose output with buffer dumps
 - `--debug`: Enable debug output with detailed internals
 - `--executor`: Executor to use: 'claude' or 'cline' (default: cline)
+- `--show-config`: Show example configuration file content and exit
 
 #### Provider Configuration Options
 

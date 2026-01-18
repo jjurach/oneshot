@@ -14,7 +14,17 @@ async def main_async():
         VERBOSITY, log_debug, log_verbose, log_info, find_latest_session, SESSION_DIR,
         count_iterations
     )
+    from oneshot.config import get_global_config, apply_executor_defaults
     from pathlib import Path
+
+    # Load configuration file
+    config, config_error = get_global_config()
+    if config_error:
+        print(f"Warning: Configuration file error: {config_error}", file=sys.stderr)
+        print("Using default settings.", file=sys.stderr)
+
+    # Apply executor-specific defaults to config
+    config = apply_executor_defaults(config)
 
     parser = argparse.ArgumentParser(
         description='Oneshot - Autonomous task completion with auditor validation',
@@ -29,6 +39,9 @@ Examples:
 Async Mode:
   oneshot --async --max-concurrent 5 'Run multiple tasks concurrently'
   oneshot --async --idle-threshold 120 'Custom idle detection timeout'
+
+Configuration:
+  Create ~/.oneshot.json to set default values. Command-line options override config file.
         """
     )
 
@@ -47,17 +60,19 @@ Async Mode:
     parser.add_argument(
         '--max-iterations',
         type=int,
-        default=DEFAULT_MAX_ITERATIONS,
-        help=f'Maximum iterations (default: {DEFAULT_MAX_ITERATIONS})'
+        default=config['max_iterations'],
+        help=f'Maximum iterations (default: {config["max_iterations"]})'
     )
 
     parser.add_argument(
         '--worker-model',
+        default=config['worker_model'],
         help='Model for worker (defaults vary by executor)'
     )
 
     parser.add_argument(
         '--auditor-model',
+        default=config['auditor_model'],
         help='Model for auditor (defaults vary by executor)'
     )
 
@@ -99,30 +114,30 @@ Async Mode:
 
     parser.add_argument(
         '--executor',
-        default='cline',
+        default=config['executor'],
         choices=['claude', 'cline'],
-        help='Which executor to use: claude or cline (default: cline)'
+        help=f'Which executor to use: claude or cline (default: {config["executor"]})'
     )
 
     parser.add_argument(
         '--initial-timeout',
         type=int,
-        default=300,
-        help='Initial timeout in seconds before activity monitoring (default: 300)'
+        default=config['initial_timeout'],
+        help=f'Initial timeout in seconds before activity monitoring (default: {config["initial_timeout"]})'
     )
 
     parser.add_argument(
         '--max-timeout',
         type=int,
-        default=3600,
-        help='Maximum timeout in seconds with activity monitoring (default: 3600)'
+        default=config['max_timeout'],
+        help=f'Maximum timeout in seconds with activity monitoring (default: {config["max_timeout"]})'
     )
 
     parser.add_argument(
         '--activity-interval',
         type=int,
-        default=30,
-        help='Activity check interval in seconds (default: 30)'
+        default=config['activity_interval'],
+        help=f'Activity check interval in seconds (default: {config["activity_interval"]})'
     )
 
     # Provider configuration options
@@ -172,22 +187,22 @@ Async Mode:
     parser.add_argument(
         '--max-concurrent',
         type=int,
-        default=5,
-        help='Maximum concurrent tasks in async mode (default: 5)'
+        default=config['max_concurrent'],
+        help=f'Maximum concurrent tasks in async mode (default: {config["max_concurrent"]})'
     )
 
     parser.add_argument(
         '--idle-threshold',
         type=int,
-        default=60,
-        help='Global idle threshold in seconds for async orchestrator (default: 60)'
+        default=config['idle_threshold'],
+        help=f'Global idle threshold in seconds for async orchestrator (default: {config["idle_threshold"]})'
     )
 
     parser.add_argument(
         '--heartbeat-interval',
         type=int,
-        default=10,
-        help='Heartbeat check interval in seconds for async orchestrator (default: 10)'
+        default=config['heartbeat_interval'],
+        help=f'Heartbeat check interval in seconds for async orchestrator (default: {config["heartbeat_interval"]})'
     )
 
     # UI options
@@ -200,8 +215,8 @@ Async Mode:
     parser.add_argument(
         '--web-port',
         type=int,
-        default=8000,
-        help='Port for web dashboard (default: 8000)'
+        default=config['web_port'],
+        help=f'Port for web dashboard (default: {config["web_port"]})'
     )
 
     parser.add_argument(
@@ -213,11 +228,28 @@ Async Mode:
     parser.add_argument(
         '--tui-refresh',
         type=float,
-        default=1.0,
-        help='TUI refresh rate in seconds (default: 1.0)'
+        default=config['tui_refresh'],
+        help=f'TUI refresh rate in seconds (default: {config["tui_refresh"]})'
+    )
+
+    parser.add_argument(
+        '--show-config',
+        action='store_true',
+        help='Show example configuration file content and exit'
     )
 
     args = parser.parse_args()
+
+    # Handle --show-config option
+    if args.show_config:
+        from oneshot.config import create_example_config
+        print("Example configuration file content:")
+        print("=" * 50)
+        print(create_example_config())
+        print("=" * 50)
+        print(f"Save this to {get_config_path()} to use these defaults.")
+        print("Command-line options will override configuration file settings.")
+        sys.exit(0)
 
     # Determine if using new provider-based API or legacy API
     use_provider_api = (args.worker_provider is not None or args.auditor_provider is not None or
