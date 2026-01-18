@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Oneshot Claude - Autonomous task completion with auditor validation
+Oneshot - Autonomous task completion with auditor validation
 """
 
 import argparse
@@ -125,6 +125,12 @@ Or if there are real issues:
 
 def extract_json(text):
     """Extract JSON object from text (handles multiline JSON). Returns the last complete JSON if multiple found."""
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
     lines = text.split('\n')
     json_blocks = []
     current_json = []
@@ -165,41 +171,113 @@ def parse_json_verdict(json_text):
 
 
 def call_executor(prompt, model, executor="claude"):
+
+
     """Call executor (claude or cline) with a prompt."""
+
+
     try:
+
+
         log_debug(f"Calling {executor} with model: {model}")
+
+
         log_debug(f"Prompt length: {len(prompt)} chars")
 
+
+
+
+
         if executor == "cline":
-            # For cline, use default model - don't pass model argument
+
+
+            # For cline, the model is configured in the tool itself
+
+
             cmd = ['cline', '--yolo', '--no-interactive', '--oneshot', prompt]
+
+
             log_debug(f"Command: {' '.join(cmd)}")
+
+
             result = subprocess.run(
+
+
                 cmd,
+
+
                 text=True,
+
+
                 capture_output=True,
+
+
                 timeout=120
-            )
-        else:  # default to claude
-            cmd = ['claude', '-p', '--model', model, '--dangerously-skip-permissions']
-            log_debug(f"Command: {' '.join(cmd)}")
-            result = subprocess.run(
-                cmd,
-                input=prompt,
-                text=True,
-                capture_output=True,
-                timeout=120
+
+
             )
 
+
+        else:  # default to claude
+
+
+            cmd = ['claude', '-p', '--model', model, '--dangerously-skip-permissions']
+
+
+            log_debug(f"Command: {' '.join(cmd)}")
+
+
+            result = subprocess.run(
+
+
+                cmd,
+
+
+                input=prompt,
+
+
+                text=True,
+
+
+                capture_output=True,
+
+
+                timeout=120
+
+
+            )
+
+
+
+
+
         log_verbose(f"{executor} call completed, output length: {len(result.stdout)} chars")
+
+
         if result.stderr:
+
+
             log_debug(f"{executor} stderr: {result.stderr}")
+
+
         return result.stdout
+
+
     except subprocess.TimeoutExpired:
+
+
         log_info(f"ERROR: {executor} call timed out")
+
+
         return f"ERROR: {executor} call timed out"
+
+
     except Exception as e:
+
+
         log_info(f"ERROR: {e}")
+
+
         return f"ERROR: {e}"
 
 
@@ -235,14 +313,31 @@ def strip_ansi(text):
 # ============================================================================
 
 
-def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="claude", resume=False, session_file=None):
+def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="claude", resume=False, session_file=None, session_log=None, keep_log=False):
     """Run the oneshot task with worker and auditor loop."""
 
     log_info(f"Starting oneshot: worker={worker_model}, auditor={auditor_model}, executor={executor}")
     log_debug(f"Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"Prompt: {prompt}")
 
     # Determine session file
-    if resume and session_file:
+    auto_generated_log = False
+    if session_log:
+        log_file = Path(session_log)
+        if log_file.exists():
+            session_context = read_session_context(log_file)
+            iteration = count_iterations(log_file) + 1
+            print(f"📂 Resuming session: {log_file}")
+            print(f"   Previous iterations: {iteration - 1}")
+            log_verbose(f"Session context length: {len(session_context) if session_context else 0} chars")
+            mode = 'a'
+        else:
+            session_context = None
+            iteration = 1
+            mode = 'w'
+            log_info(f"Creating new session: {log_file.name}")
+            with open(log_file, mode) as f:
+                f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
+    elif resume and session_file:
         log_file = session_file
         session_context = read_session_context(log_file)
         iteration = count_iterations(log_file) + 1
@@ -252,6 +347,7 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
         # Append to existing log
         mode = 'a'
     else:
+        auto_generated_log = True
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = SESSION_DIR / f"session_{timestamp}.md"
         session_context = None
@@ -260,7 +356,7 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
         log_info(f"Creating new session: {log_file.name}")
         log_verbose(f"Session directory: {SESSION_DIR}")
         with open(log_file, mode) as f:
-            f.write(f"# Claude Session Master Log - {datetime.now()}\n\n")
+            f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
 
     while iteration <= max_iterations:
         print(f"\n--- 🤖 Worker: Iteration {iteration} ---")
@@ -345,6 +441,15 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
             log_info(f"Task completed successfully in {iteration} iteration(s)")
             with open(log_file, 'a') as f:
                 f.write("\n✅ Task completed successfully!\n")
+
+            # Clean up auto-generated session logs unless keep_log is True or session_log was specified
+            if auto_generated_log and not keep_log:
+                try:
+                    log_file.unlink()
+                    log_info(f"Cleaned up session log: {log_file}")
+                except Exception as e:
+                    log_info(f"Failed to clean up session log: {e}")
+
             return True
 
         elif verdict and verdict.upper() == "REITERATE":
@@ -365,6 +470,15 @@ def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="c
     msg = f"Max iterations ({max_iterations}) reached without completion."
     print(f"\n❌ {msg}")
     log_info(msg)
+
+    # Clean up auto-generated session logs unless keep_log is True
+    if auto_generated_log and not keep_log:
+        try:
+            log_file.unlink()
+            log_info(f"Cleaned up session log: {log_file}")
+        except Exception as e:
+            log_info(f"Failed to clean up session log: {e}")
+
     return False
 
 
@@ -385,14 +499,14 @@ def count_iterations(log_file):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Oneshot Claude - Autonomous task completion with auditor validation',
+        description='Oneshot - Autonomous task completion with auditor validation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  oneshot-claude.py 'What is the capital of Denmark?'
-  oneshot-claude.py --worker-model claude-opus-4 'Complex task'
-  oneshot-claude.py --resume 'Continue working on this'
-  oneshot-claude.py --worker-model claude-3-5-sonnet-20241022 --auditor-model claude-opus-4 'My task'
+  oneshot 'What is the capital of Denmark?'
+  oneshot --worker-model claude-3-5-sonnet-20241022 'Complex task'
+  oneshot --resume 'Continue working on this'
+  oneshot --session-log my_task.md 'Task with custom logging'
         """
     )
 
@@ -410,14 +524,12 @@ Examples:
 
     parser.add_argument(
         '--worker-model',
-        default=DEFAULT_WORKER_MODEL,
-        help=f'Model for worker (default: {DEFAULT_WORKER_MODEL})'
+        help='Model for worker (defaults vary by executor)'
     )
 
     parser.add_argument(
         '--auditor-model',
-        default=DEFAULT_AUDITOR_MODEL,
-        help=f'Model for auditor (default: {DEFAULT_AUDITOR_MODEL})'
+        help='Model for auditor (defaults vary by executor)'
     )
 
     parser.add_argument(
@@ -430,6 +542,18 @@ Examples:
         '--session',
         type=str,
         help='Specific session file to resume (implies --resume)'
+    )
+
+    parser.add_argument(
+        '--session-log',
+        type=str,
+        help='Path to session log file (will append if exists, will not auto-delete)'
+    )
+
+    parser.add_argument(
+        '--keep-log',
+        action='store_true',
+        help='Keep the session log file after completion'
     )
 
     parser.add_argument(
@@ -452,6 +576,22 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    # Set default models based on executor
+    if args.executor == "cline":
+        if args.worker_model or args.auditor_model:
+            print("Model selection is not supported for the cline executor. Please configure the model in the cline tool.", file=sys.stderr)
+            sys.exit(1)
+        args.worker_model = None
+        args.auditor_model = None
+    else:  # claude
+        default_worker = "claude-3-5-haiku-20241022"
+        default_auditor = "claude-3-5-haiku-20241022"
+
+        if args.worker_model is None:
+            args.worker_model = default_worker
+        if args.auditor_model is None:
+            args.auditor_model = default_auditor
 
     # Set global verbosity level
     global VERBOSITY
@@ -493,7 +633,9 @@ Examples:
         max_iterations=args.max_iterations,
         executor=args.executor,
         resume=resume,
-        session_file=session_file
+        session_file=session_file,
+        session_log=args.session_log,
+        keep_log=args.keep_log
     )
 
     sys.exit(0 if success else 1)

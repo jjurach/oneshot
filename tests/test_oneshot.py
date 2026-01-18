@@ -117,7 +117,7 @@ class TestCallExecutor:
             'returncode': 0
         })()
 
-        result = call_executor("test prompt", "claude-3-5-haiku", "cline")
+        result = call_executor("test prompt", None, "cline")
         assert result == "Mock output"
 
         mock_run.assert_called_once()
@@ -295,3 +295,40 @@ class TestRunOneshot:
 
         assert success is False
         assert mock_call.call_count == 6  # 3 workers + 3 auditors
+
+
+from oneshot.oneshot import main as oneshot_main
+
+class TestMain:
+    @patch('sys.argv', ['oneshot', 'test prompt', '--executor', 'cline', '--worker-model', 'some-model'])
+    def test_main_cline_with_model_aborts(self):
+        """Test that main aborts when cline executor is used with a model."""
+        with pytest.raises(SystemExit) as excinfo:
+            oneshot_main()
+        assert excinfo.value.code == 1
+
+    @patch('sys.argv', ['oneshot', 'test prompt', '--executor', 'cline'])
+    @patch('oneshot.oneshot.call_executor')
+    def test_main_cline_without_model_succeeds(self, mock_call_executor):
+        """Test that main succeeds when cline executor is used without a model."""
+        # Mock the return value of call_executor to simulate a successful run
+        mock_call_executor.side_effect = [
+            '{"status": "DONE", "result": "Success"}',
+            '{"verdict": "DONE", "reason": "Perfect"}'
+        ] * 5
+        with patch('sys.exit') as mock_exit:
+            oneshot_main()
+            mock_exit.assert_called_once_with(0)
+
+    @patch('sys.argv', ['oneshot', 'test prompt', '--executor', 'claude', '--worker-model', 'some-model'])
+    @patch('oneshot.oneshot.call_executor')
+    def test_main_claude_with_model_succeeds(self, mock_call_executor):
+        """Test that main succeeds when claude executor is used with a model."""
+        # Mock the return value of call_executor to simulate a successful run
+        mock_call_executor.side_effect = [
+            '{"status": "DONE", "result": "Success"}',
+            '{"verdict": "DONE", "reason": "Perfect"}'
+        ] * 5
+        with patch('sys.exit') as mock_exit:
+            oneshot_main()
+            mock_exit.assert_called_once_with(0)
