@@ -19,7 +19,9 @@ from oneshot.oneshot import (
     read_session_context,
     strip_ansi,
     run_oneshot,
-    count_iterations
+    count_iterations,
+    contains_completion_indicators,
+    extract_lenient_json
 )
 
 
@@ -86,6 +88,49 @@ class TestParseJsonVerdict:
         assert verdict is None
         assert reason is None
         assert advice is None
+
+
+class TestLenientJsonParsing:
+    """Test lenient JSON parsing functions."""
+
+    def test_contains_completion_indicators_done(self):
+        """Test detection of completion indicators."""
+        assert contains_completion_indicators("Task is DONE")
+        assert contains_completion_indicators("Success! Completed the work")
+        assert contains_completion_indicators('{"status": "success"}')
+
+    def test_contains_completion_indicators_false(self):
+        """Test non-detection of completion indicators."""
+        assert not contains_completion_indicators("Working on the task")
+        assert not contains_completion_indicators("Error occurred")
+
+    def test_extract_lenient_json_strict(self):
+        """Test strict JSON extraction."""
+        text = '{"status": "DONE", "result": "Answer"}'
+        result, method = extract_lenient_json(text)
+        assert result == text
+        assert method == "strict"
+
+    def test_extract_lenient_json_fixed(self):
+        """Test JSON fixing (trailing comma removal)."""
+        text = '{"status": "DONE", "result": "Answer",}'
+        result, method = extract_lenient_json(text)
+        assert '"result": "Answer"' in result
+        assert method == "fixed"
+
+    def test_extract_lenient_json_malformed(self):
+        """Test lenient fallback parsing for malformed JSON."""
+        text = '{status: "success", result: "Task completed"}'
+        result, method = extract_lenient_json(text)
+        assert result is not None
+        assert method == "lenient_fallback"
+
+    def test_extract_lenient_json_plain_text(self):
+        """Test lenient fallback for plain text with completion indicators."""
+        text = "Working on the task and DONE"
+        result, method = extract_lenient_json(text)
+        assert result is not None
+        assert method == "lenient_fallback"
 
 
 class TestCallExecutor:
