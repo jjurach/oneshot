@@ -54,8 +54,11 @@ oneshot --worker-model claude-3-5-sonnet-20241022 --auditor-model claude-3-5-hai
 # Set maximum iterations
 oneshot --max-iterations 10 "Difficult task"
 
+# Configure timeouts for long-running tasks
+oneshot --initial-timeout 600 --max-timeout 7200 --activity-interval 60 "Long running task"
+
 # Resume a previous session
-oneshot --resume "Continue working on this"
+oneshot --resume 'Continue working on this'
 
 # Use specific session file
 oneshot --session session_20230101_120000.md --resume "Continue from specific session"
@@ -79,6 +82,9 @@ oneshot --executor cline "Task for cline"
 - `--max-iterations`: Maximum number of iterations (default: 5)
 - `--worker-model`: Model for the worker (default: claude-3-5-haiku-20241022)
 - `--auditor-model`: Model for the auditor (default: claude-3-5-haiku-20241022)
+- `--initial-timeout`: Initial timeout in seconds before activity monitoring (default: 300)
+- `--max-timeout`: Maximum timeout in seconds with activity monitoring (default: 3600)
+- `--activity-interval`: Activity check interval in seconds (default: 30)
 - `--resume`: Resume the most recent session
 - `--session`: Specific session file to resume
 - `--session-log`: Path to session log file (will append if exists, will not auto-delete)

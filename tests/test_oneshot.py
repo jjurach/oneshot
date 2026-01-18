@@ -129,7 +129,7 @@ class TestCallExecutor:
     def test_call_executor_timeout(self, mock_run):
         """Test executor timeout handling."""
         from subprocess import TimeoutExpired
-        mock_run.side_effect = TimeoutExpired("cmd", 120)
+        mock_run.side_effect = TimeoutExpired("cmd", 300)
 
         result = call_executor("test prompt", "model", "claude")
         assert "timed out" in result
@@ -141,6 +141,27 @@ class TestCallExecutor:
 
         result = call_executor("test prompt", "model", "claude")
         assert "ERROR: Test error" == result
+
+    @patch('subprocess.run')
+    def test_call_executor_adaptive_timeout(self, mock_run):
+        """Test adaptive timeout with activity monitoring."""
+        from subprocess import TimeoutExpired
+
+        # First call times out after initial timeout
+        # Second call (adaptive) succeeds
+        mock_run.side_effect = [
+            TimeoutExpired("cmd", 300),  # Initial timeout
+            type('MockResult', (), {     # Adaptive success
+                'stdout': 'Adaptive output',
+                'stderr': '',
+                'returncode': 0
+            })()
+        ]
+
+        result = call_executor("test prompt", "model", "claude", initial_timeout=300, max_timeout=3600)
+        assert result == "Adaptive output"
+
+        assert mock_run.call_count == 2
 
 
 class TestSessionManagement:

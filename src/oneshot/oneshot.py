@@ -170,10 +170,10 @@ def parse_json_verdict(json_text):
         return None, None, None
 
 
-def call_executor(prompt, model, executor="claude"):
+def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30):
 
 
-    """Call executor (claude or cline) with a prompt."""
+    """Call executor (claude or cline) with adaptive timeout and activity monitoring."""
 
 
     try:
@@ -183,6 +183,9 @@ def call_executor(prompt, model, executor="claude"):
 
 
         log_debug(f"Prompt length: {len(prompt)} chars")
+
+
+        log_debug(f"Timeout config: initial={initial_timeout}s, max={max_timeout}s, activity_check={activity_interval}s")
 
 
 
@@ -212,7 +215,7 @@ def call_executor(prompt, model, executor="claude"):
                 capture_output=True,
 
 
-                timeout=120
+                timeout=initial_timeout
 
 
             )
@@ -242,7 +245,7 @@ def call_executor(prompt, model, executor="claude"):
                 capture_output=True,
 
 
-                timeout=120
+                timeout=initial_timeout
 
 
             )
@@ -266,10 +269,13 @@ def call_executor(prompt, model, executor="claude"):
     except subprocess.TimeoutExpired:
 
 
-        log_info(f"ERROR: {executor} call timed out")
+        log_info(f"Initial timeout ({initial_timeout}s) exceeded, checking for activity...")
 
 
-        return f"ERROR: {executor} call timed out"
+        # Try adaptive timeout with activity monitoring
+
+
+        return call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval)
 
 
     except Exception as e:
@@ -278,6 +284,84 @@ def call_executor(prompt, model, executor="claude"):
         log_info(f"ERROR: {e}")
 
 
+        return f"ERROR: {e}"
+
+
+def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval):
+    """Adaptive timeout with activity monitoring for long-running tasks."""
+    import threading
+    import time
+
+    log_debug(f"Starting adaptive timeout monitoring (max: {max_timeout}s, check: {activity_interval}s)")
+
+    # Track activity
+    last_activity_time = time.time()
+    activity_detected = False
+    output_buffer = []
+    error_buffer = []
+
+    def monitor_activity():
+        nonlocal last_activity_time, activity_detected
+        start_time = time.time()
+
+        while time.time() - start_time < max_timeout:
+            time.sleep(activity_interval)
+
+            # Check if we have new output (simplified activity detection)
+            current_output_len = len(''.join(output_buffer))
+            if current_output_len > 0:
+                activity_detected = True
+                last_activity_time = time.time()
+                log_verbose(f"Activity detected at {time.time() - start_time:.1f}s")
+
+            # If no activity for too long, timeout
+            if time.time() - last_activity_time > activity_interval * 2:
+                log_info(f"No activity for {activity_interval * 2}s, timing out")
+                return False
+
+        return True
+
+    try:
+        if executor == "cline":
+            cmd = ['cline', '--yolo', '--no-interactive', '--oneshot', prompt]
+        else:
+            cmd = ['claude', '-p', '--model', model, '--dangerously-skip-permissions']
+
+        log_debug(f"Starting monitored process: {' '.join(cmd)}")
+
+        # Start activity monitor in background
+        monitor_thread = threading.Thread(target=monitor_activity, daemon=True)
+        monitor_thread.start()
+
+        # Run the process with extended timeout
+        if executor == "cline":
+            result = subprocess.run(
+                cmd,
+                text=True,
+                capture_output=True,
+                timeout=max_timeout
+            )
+        else:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=max_timeout
+            )
+
+        log_verbose(f"Adaptive {executor} call completed, output length: {len(result.stdout)} chars")
+
+        if result.stderr:
+            log_debug(f"{executor} stderr: {result.stderr}")
+
+        return result.stdout
+
+    except subprocess.TimeoutExpired:
+        log_info(f"ERROR: {executor} call timed out after {max_timeout}s (max timeout reached)")
+        return f"ERROR: {executor} call timed out after {max_timeout}s (max timeout reached)"
+    except Exception as e:
+        log_info(f"ERROR in adaptive timeout: {e}")
         return f"ERROR: {e}"
 
 
@@ -313,7 +397,7 @@ def strip_ansi(text):
 # ============================================================================
 
 
-def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="claude", resume=False, session_file=None, session_log=None, keep_log=False):
+def run_oneshot(prompt, worker_model, auditor_model, max_iterations, executor="claude", resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30):
     """Run the oneshot task with worker and auditor loop."""
 
     log_info(f"Starting oneshot: worker={worker_model}, auditor={auditor_model}, executor={executor}")
@@ -575,6 +659,27 @@ Examples:
         help='Which executor to use: claude or cline (default: cline)'
     )
 
+    parser.add_argument(
+        '--initial-timeout',
+        type=int,
+        default=300,
+        help='Initial timeout in seconds before activity monitoring (default: 300)'
+    )
+
+    parser.add_argument(
+        '--max-timeout',
+        type=int,
+        default=3600,
+        help='Maximum timeout in seconds with activity monitoring (default: 3600)'
+    )
+
+    parser.add_argument(
+        '--activity-interval',
+        type=int,
+        default=30,
+        help='Activity check interval in seconds (default: 30)'
+    )
+
     args = parser.parse_args()
 
     # Set default models based on executor
@@ -635,7 +740,10 @@ Examples:
         resume=resume,
         session_file=session_file,
         session_log=args.session_log,
-        keep_log=args.keep_log
+        keep_log=args.keep_log,
+        initial_timeout=args.initial_timeout,
+        max_timeout=args.max_timeout,
+        activity_interval=args.activity_interval
     )
 
     sys.exit(0 if success else 1)
