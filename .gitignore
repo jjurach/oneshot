@@ -172,3 +172,4 @@ session_*.md
 *.tmp
 *.bak
 tmp/
+tmp-*
