@@ -173,3 +173,4 @@ session_*.md
 *.bak
 tmp/
 tmp-*
+.aider*
