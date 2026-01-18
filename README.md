@@ -1,8 +1,10 @@
 # Oneshot
 
-Autonomous task completion with auditor validation using Claude models.
+Autonomous task completion with auditor validation.
 
-Oneshot is a command-line tool that uses Claude AI models in a worker-auditor loop to autonomously complete tasks. The worker attempts to complete the task, and an auditor validates the results, providing feedback for improvement until the task is successfully completed.
+Oneshot is a command-line tool that uses AI models in a worker-auditor loop to autonomously complete tasks. The worker attempts to complete the task, and an auditor validates the results, providing feedback for improvement until the task is successfully completed.
+
+Currently supports Claude models (via `claude` command) and Cline (via `cline` command).
 
 ## Features
 
@@ -10,7 +12,7 @@ Oneshot is a command-line tool that uses Claude AI models in a worker-auditor lo
 - **Auditor Validation**: Built-in validation loop ensures quality and correctness
 - **Session Management**: Tracks progress across iterations with detailed session logs
 - **Multiple Executors**: Supports both `claude` and `cline` executors
-- **Configurable Models**: Choose different Claude models for worker and auditor roles
+- **Configurable Models**: Choose different models for worker and auditor roles (Claude or xAI Grok)
 - **Resume Capability**: Continue interrupted sessions from where they left off
 
 ## Installation
@@ -58,6 +60,12 @@ oneshot --resume "Continue working on this"
 # Use specific session file
 oneshot --session session_20230101_120000.md --resume "Continue from specific session"
 
+# Specify custom session log file
+oneshot --session-log my_task_log.md "Task with custom logging"
+
+# Keep session log after completion
+oneshot --keep-log "Task where I want to keep the log"
+
 # Enable verbose output
 oneshot --verbose "Debug this task"
 
@@ -69,13 +77,15 @@ oneshot --executor cline "Task for cline"
 
 - `prompt`: The task to complete (required)
 - `--max-iterations`: Maximum number of iterations (default: 5)
-- `--worker-model`: Claude model for the worker (default: claude-3-5-haiku-20241022)
-- `--auditor-model`: Claude model for the auditor (default: claude-3-5-haiku-20241022)
+- `--worker-model`: Model for the worker (default: claude-3-5-haiku-20241022)
+- `--auditor-model`: Model for the auditor (default: claude-3-5-haiku-20241022)
 - `--resume`: Resume the most recent session
 - `--session`: Specific session file to resume
+- `--session-log`: Path to session log file (will append if exists, will not auto-delete)
+- `--keep-log`: Keep the session log file after completion
 - `--verbose`: Enable verbose output with buffer dumps
 - `--debug`: Enable debug output with detailed internals
-- `--executor`: Executor to use: 'claude' or 'cline' (default: claude)
+- `--executor`: Executor to use: 'claude' or 'cline' (default: cline)
 
 ## How It Works
 

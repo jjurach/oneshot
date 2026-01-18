@@ -1,4 +1,4 @@
-"""Oneshot Claude - Autonomous task completion with auditor validation."""
+"""Oneshot - Autonomous task completion with auditor validation."""
 
 from .oneshot import run_oneshot, main
 

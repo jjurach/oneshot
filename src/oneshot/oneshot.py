@@ -570,9 +570,9 @@ Examples:
 
     parser.add_argument(
         '--executor',
-        default='claude',
+        default='cline',
         choices=['claude', 'cline'],
-        help='Which executor to use: claude or cline (default: claude)'
+        help='Which executor to use: claude or cline (default: cline)'
     )
 
     args = parser.parse_args()

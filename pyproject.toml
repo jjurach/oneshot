@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "oneshot"
 version = "0.1.0"
-description = "Autonomous task completion with auditor validation using Claude"
+description = "Autonomous task completion with auditor validation"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.8"
