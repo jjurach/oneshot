@@ -167,6 +167,9 @@ Thumbs.db
 
 # Session logs
 session_*.md
+*oneshot*.json
+*oneshot*.md
+dev_notes/oneshot/
 
 # Temporary files
 *.tmp

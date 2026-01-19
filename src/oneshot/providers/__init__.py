@@ -45,9 +45,9 @@ class ProviderConfig:
 
         if self.provider_type == "executor":
             if not self.executor:
-                raise ValueError("executor provider requires 'executor' field (claude, cline, or aider)")
-            if self.executor not in ["claude", "cline", "aider"]:
-                raise ValueError(f"executor must be 'claude', 'cline', or 'aider', got: {self.executor}")
+                raise ValueError("executor provider requires 'executor' field (claude, cline, aider, or gemini)")
+            if self.executor not in ["claude", "cline", "aider", "gemini"]:
+                raise ValueError(f"executor must be 'claude', 'cline', 'aider', or 'gemini', got: {self.executor}")
             # Claude and aider executors use their own default model selection
             # Model is optional - if not provided, executor will use its defaults
 
@@ -84,7 +84,7 @@ class Provider(ABC):
 # ============================================================================
 
 class ExecutorProvider(Provider):
-    """Provider that wraps subprocess executor calls (claude, cline) and aider executor."""
+    """Provider that wraps subprocess executor calls (claude, cline) and direct executors (aider, gemini)."""
 
     def generate(self, prompt: str) -> str:
         """Call executor subprocess synchronously."""
@@ -93,6 +93,9 @@ class ExecutorProvider(Provider):
         if self.config.executor == "aider":
             log_debug(f"ExecutorProvider calling aider executor")
             return self._call_aider_executor(prompt)
+        elif self.config.executor == "gemini":
+            log_debug(f"ExecutorProvider calling gemini executor")
+            return self._call_gemini_executor(prompt)
         else:
             log_debug(f"ExecutorProvider calling {self.config.executor} with model: {self.config.model}")
             return call_executor(
@@ -111,6 +114,9 @@ class ExecutorProvider(Provider):
         if self.config.executor == "aider":
             log_debug(f"ExecutorProvider async calling aider executor")
             return self._call_aider_executor(prompt)
+        elif self.config.executor == "gemini":
+            log_debug(f"ExecutorProvider async calling gemini executor")
+            return self._call_gemini_executor(prompt)
         else:
             log_debug(f"ExecutorProvider async calling {self.config.executor} with model: {self.config.model}")
             return await call_executor_async(
@@ -139,6 +145,24 @@ class ExecutorProvider(Provider):
         except Exception as e:
             log_debug(f"Aider executor error: {e}")
             return f"ERROR: Failed to run aider executor: {e}"
+
+    def _call_gemini_executor(self, prompt: str) -> str:
+        """Call the gemini executor directly."""
+        from oneshot.oneshot import log_debug
+
+        try:
+            # Use GeminiCLIExecutor from this package
+            executor = GeminiCLIExecutor()
+            result = executor.run_task(prompt)
+
+            if result.success:
+                return result.output
+            else:
+                error_msg = result.error or "Gemini execution failed"
+                return f"ERROR: {error_msg}\n\nOutput:\n{result.output}"
+        except Exception as e:
+            log_debug(f"Gemini executor error: {e}")
+            return f"ERROR: Failed to run gemini executor: {e}"
 
 
 # ============================================================================

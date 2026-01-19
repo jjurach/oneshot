@@ -232,10 +232,10 @@ class TestSessionManagement:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
 
-            # Create some session files
-            file1 = temp_path / "session_20230101_120000.md"
-            file2 = temp_path / "session_20230101_130000.md"
-            file3 = temp_path / "session_20230102_120000.md"
+            # Create some session files (both old and new format)
+            file1 = temp_path / "2023-01-01_12-00-00_oneshot.json"
+            file2 = temp_path / "2023-01-01_13-00-00_oneshot.json"
+            file3 = temp_path / "2023-01-02_12-00-00_oneshot.json"
 
             file1.touch()
             import time
@@ -245,7 +245,7 @@ class TestSessionManagement:
             file3.touch()  # This will have the latest mtime
 
             latest = find_latest_session(temp_path)
-            assert latest.name == "session_20230102_120000.md"
+            assert latest.name == "2023-01-02_12-00-00_oneshot.json"
 
     def test_find_latest_session_no_files(self):
         """Test finding latest session when no files exist."""
@@ -338,8 +338,8 @@ class TestRunOneshot:
                 assert success is True
                 assert mock_call.call_count == 2  # worker + auditor
 
-                # Check that the log file was deleted
-                log_files = list(Path(tmpdir).glob("session_*.md"))
+                # Check that the log file was deleted (both old and new formats)
+                log_files = list(Path(tmpdir).glob("session_*.md")) + list(Path(tmpdir).glob("*oneshot*.json"))
                 assert len(log_files) == 0
 
     @patch('oneshot.oneshot.call_executor')
@@ -379,8 +379,8 @@ class TestRunOneshot:
                 assert success is False
                 assert mock_call.call_count == 6  # 3 workers + 3 auditors
 
-                # Check that the log file was NOT deleted
-                log_files = list(Path(tmpdir).glob("session_*.md"))
+                # Check that the log file was NOT deleted (check for new format)
+                log_files = list(Path(tmpdir).glob("*oneshot*.json"))
                 assert len(log_files) == 1
 
 

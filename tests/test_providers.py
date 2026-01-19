@@ -52,21 +52,23 @@ class TestProviderConfig:
             )
 
     def test_executor_config_invalid_executor(self):
-        """Test that executor must be claude or cline."""
-        with pytest.raises(ValueError, match="executor must be 'claude' or 'cline'"):
+        """Test that executor must be claude, cline, aider, or gemini."""
+        with pytest.raises(ValueError, match="executor must be 'claude', 'cline', 'aider', or 'gemini'"):
             ProviderConfig(
                 provider_type="executor",
                 executor="invalid",
                 model="some-model"
             )
 
-    def test_executor_config_claude_missing_model(self):
-        """Test that claude executor requires model."""
-        with pytest.raises(ValueError, match="claude executor requires 'model' field"):
-            ProviderConfig(
-                provider_type="executor",
-                executor="claude"
-            )
+    def test_executor_config_claude_without_model(self):
+        """Test that claude executor allows missing model (uses defaults)."""
+        config = ProviderConfig(
+            provider_type="executor",
+            executor="claude"
+        )
+        assert config.provider_type == "executor"
+        assert config.executor == "claude"
+        assert config.model is None  # Model is optional for executors
 
     def test_direct_config_valid(self):
         """Test valid direct config."""

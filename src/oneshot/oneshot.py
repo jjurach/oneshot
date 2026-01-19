@@ -603,8 +603,10 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
 
 def find_latest_session(sessions_dir):
     """Find the latest session file."""
+    # Support both old (session_*.md) and new (oneshot_*.json) formats
     session_files = sorted(
-        Path(sessions_dir).glob(f"session_*.md"),
+        list(Path(sessions_dir).glob(f"session_*.md")) +
+        list(Path(sessions_dir).glob(f"*oneshot*.json")),
         key=lambda p: p.name,
         reverse=True
     )
@@ -614,8 +616,25 @@ def find_latest_session(sessions_dir):
 def read_session_context(session_file):
     """Read and parse existing session to understand context."""
     try:
-        with open(session_file, 'r') as f:
+        session_path = Path(session_file)
+        with open(session_path, 'r') as f:
             content = f.read()
+
+        # If JSON format, extract iterations text
+        if session_path.suffix == '.json':
+            try:
+                data = json.loads(content)
+                # Reconstruct text from iterations for context
+                context_parts = []
+                for iteration in data.get('iterations', []):
+                    if 'worker_output' in iteration:
+                        context_parts.append(f"Worker: {iteration['worker_output']}")
+                    if 'auditor_output' in iteration:
+                        context_parts.append(f"Auditor: {iteration['auditor_output']}")
+                return '\n'.join(context_parts) if context_parts else content
+            except json.JSONDecodeError:
+                return content
+
         return content
     except Exception as e:
         print(f"Error reading session: {e}")
@@ -669,15 +688,32 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         mode = 'a'
     else:
         auto_generated_log = True
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = SESSION_DIR / f"session_{timestamp}.md"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_file = SESSION_DIR / f"{timestamp}_oneshot.json"
         session_context = None
         iteration = 1
         mode = 'w'
         log_info(f"Creating new session: {log_file.name}")
         log_verbose(f"Session directory: {SESSION_DIR}")
-        with open(log_file, mode) as f:
-            f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
+
+        # Initialize JSON session log structure
+        session_data = {
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "prompt": prompt,
+                "worker_provider": worker_provider.config.provider_type,
+                "worker_executor": getattr(worker_provider.config, 'executor', None),
+                "worker_model": worker_provider.config.model,
+                "auditor_provider": auditor_provider.config.provider_type,
+                "auditor_executor": getattr(auditor_provider.config, 'executor', None),
+                "auditor_model": auditor_provider.config.model,
+                "max_iterations": max_iterations,
+                "working_directory": str(Path.cwd())
+            },
+            "iterations": []
+        }
+        with open(log_file, 'w') as f:
+            json.dump(session_data, f, indent=2)
 
     while iteration <= max_iterations:
         print(f"\n--- 🤖 Worker: Iteration {iteration} ---")
@@ -694,19 +730,23 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         dump_buffer("Worker Output", worker_output)
         print(worker_output)
 
-        # Log worker output
+        # Log worker output to JSON
         log_verbose("Logging worker output to session file")
-        with open(log_file, 'a') as f:
-            f.write(f"\n## Iteration {iteration} - Worker Output\n\n")
-            f.write(strip_ansi(worker_output) + "\n")
+        with open(log_file, 'r') as f:
+            session_data = json.load(f)
+
+        iteration_data = {"iteration": iteration, "worker_output": strip_ansi(worker_output)}
+        session_data["iterations"].append(iteration_data)
+
+        with open(log_file, 'w') as f:
+            json.dump(session_data, f, indent=2)
 
         # 2. Summary Stats
-        with open(log_file, 'r') as f:
-            log_lines = len(f.readlines())
-        print(f"Log Size: {log_lines} lines.")
+        iteration_count = len(session_data.get("iterations", []))
+        print(f"Log Size: {iteration_count} iteration(s).")
         print("Last worker output:")
         print('\n'.join(worker_output.split('\n')[-3:]))
-        log_debug(f"Session file size: {log_lines} lines")
+        log_debug(f"Session iterations: {iteration_count}")
 
         # 3. Success Auditor Step
         print("\n--- ⚖️ Auditor: Checking Progress ---")
@@ -738,11 +778,17 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         audit_response = auditor_provider.generate(full_auditor_prompt)
         dump_buffer("Auditor Response", audit_response)
 
-        # Log auditor response
+        # Log auditor response to JSON
         log_verbose("Logging auditor response to session file")
-        with open(log_file, 'a') as f:
-            f.write(f"\n### Iteration {iteration} - Auditor Response\n\n")
-            f.write(strip_ansi(audit_response) + "\n")
+        with open(log_file, 'r') as f:
+            session_data = json.load(f)
+
+        # Update the last iteration with auditor output
+        if session_data["iterations"]:
+            session_data["iterations"][-1]["auditor_output"] = strip_ansi(audit_response)
+
+        with open(log_file, 'w') as f:
+            json.dump(session_data, f, indent=2)
 
         # Extract verdict from auditor response using lenient parsing
         log_verbose("Extracting verdict from auditor response (lenient parsing)")
@@ -764,8 +810,15 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         if verdict and verdict.upper() == "DONE":
             print("✅ Auditor confirmed: DONE.")
             log_info(f"Task completed successfully in {iteration} iteration(s)")
-            with open(log_file, 'a') as f:
-                f.write("\n✅ Task completed successfully!\n")
+
+            # Update JSON with completion status
+            with open(log_file, 'r') as f:
+                session_data = json.load(f)
+            session_data["metadata"]["status"] = "completed"
+            session_data["metadata"]["completion_iteration"] = iteration
+            session_data["metadata"]["end_time"] = datetime.now().isoformat()
+            with open(log_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
 
             # Clean up auto-generated session logs unless keep_log is True or session_log was specified
             if auto_generated_log and not keep_log:
@@ -1177,8 +1230,8 @@ Examples:
     parser.add_argument(
         '--executor',
         default='cline',
-        choices=['claude', 'cline'],
-        help='Which executor to use: claude or cline (default: cline)'
+        choices=['claude', 'cline', 'aider', 'gemini'],
+        help='Which executor to use: claude, cline, aider, or gemini (default: cline)'
     )
 
     parser.add_argument(
@@ -1202,12 +1255,31 @@ Examples:
         help='Activity check interval in seconds (default: 30)'
     )
 
+    parser.add_argument(
+        '--logs-dir',
+        type=str,
+        default=None,
+        help='Directory to store session logs (default: current directory)'
+    )
+
     args = parser.parse_args()
 
     # Set default models based on executor
     if args.executor == "cline":
         if args.worker_model or args.auditor_model:
             print("Model selection is not supported for the cline executor. Please configure the model in the cline tool.", file=sys.stderr)
+            sys.exit(1)
+        args.worker_model = None
+        args.auditor_model = None
+    elif args.executor == "aider":
+        if args.worker_model or args.auditor_model:
+            print("Model selection is not supported for the aider executor. Please configure the model in the aider tool.", file=sys.stderr)
+            sys.exit(1)
+        args.worker_model = None
+        args.auditor_model = None
+    elif args.executor == "gemini":
+        if args.worker_model or args.auditor_model:
+            print("Model selection is not supported for the gemini executor. Please configure the model in the gemini CLI.", file=sys.stderr)
             sys.exit(1)
         args.worker_model = None
         args.auditor_model = None
@@ -1235,6 +1307,17 @@ Examples:
     if not args.prompt:
         parser.print_help()
         sys.exit(1)
+
+    # Configure logs directory
+    global SESSION_DIR
+    if args.logs_dir:
+        logs_dir = Path(args.logs_dir)
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        SESSION_DIR = logs_dir
+        log_verbose(f"Using logs directory: {SESSION_DIR}")
+    else:
+        # Ensure SESSION_DIR exists
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
     # Handle resume
     resume = args.resume or args.session is not None
