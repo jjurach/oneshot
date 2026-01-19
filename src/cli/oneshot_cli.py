@@ -280,10 +280,8 @@ Configuration:
             executor = args.executor
             model = args.worker_model
 
-            # Set default model for claude executor
-            if executor == "claude" and not model:
-                model = "claude-3-5-haiku-20241022"
-            elif executor == "cline":
+            # Claude executor uses its own default model selection
+            if executor == "cline":
                 if model:
                     print("Model selection is not supported for the cline executor. Please configure the model in the cline tool.", file=sys.stderr)
                     sys.exit(1)
@@ -320,10 +318,8 @@ Configuration:
             executor = args.auditor_executor if args.auditor_executor else args.executor
             model = args.auditor_model
 
-            # Set default model for claude executor
-            if executor == "claude" and not model:
-                model = "claude-3-5-haiku-20241022"
-            elif executor == "cline":
+            # Claude executor uses its own default model selection
+            if executor == "cline":
                 if model:
                     print("Model selection is not supported for the cline executor. Please configure the model in the cline tool.", file=sys.stderr)
                     sys.exit(1)
@@ -354,14 +350,7 @@ Configuration:
             # Aider executor uses built-in models, no model selection needed via CLI
             args.worker_model = None
             args.auditor_model = None
-        else:  # claude
-            default_worker = "claude-3-5-haiku-20241022"
-            default_auditor = "claude-3-5-haiku-20241022"
-
-            if args.worker_model is None:
-                args.worker_model = default_worker
-            if args.auditor_model is None:
-                args.auditor_model = default_auditor
+        # For claude executor, use its own default model selection (don't force a model)
 
     # Set global verbosity level
     global VERBOSITY
