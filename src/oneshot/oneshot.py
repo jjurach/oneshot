@@ -681,7 +681,7 @@ def parse_json_verdict(json_text):
     return parse_lenient_verdict(json_text)
 
 
-def _process_executor_output(raw_output: str, executor_name: str = "executor", task_id: Optional[str] = None) -> Tuple[str, List[Any]]:
+def _process_executor_output(raw_output: str, executor_name: str = "executor", task_id: Optional[str] = None, activity_logger=None) -> Tuple[str, List[Any]]:
     """
     Process executor output through activity interpreter.
 
@@ -691,8 +691,8 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
     try:
         interpreter = get_interpreter()
 
-        # Extract activities from raw output
-        activities = interpreter.interpret_activity(raw_output)
+        # Extract activities from raw output, passing logger for NDJSON logging
+        activities = interpreter.interpret_activity(raw_output, activity_logger)
 
         # Emit activity events asynchronously (non-blocking)
         if activities:
@@ -731,7 +731,7 @@ async def _emit_activities(activities: List[Any], executor_name: str, task_id: O
         log_debug(f"Error emitting executor activities: {e}")
 
 
-def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30):
+def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30, activity_logger=None):
     """
     Call executor (claude or cline) with streaming output and adaptive timeout.
 
@@ -818,7 +818,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
 
 async def call_executor_async(prompt: str, model: Optional[str], executor: str = "claude",
                             initial_timeout: float = 300, max_timeout: float = 3600,
-                            activity_interval: float = 30) -> str:
+                            activity_interval: float = 30, activity_logger=None) -> str:
     """
     Async version of call_executor using OneshotTask for better process management.
 
@@ -1063,6 +1063,7 @@ def strip_ansi(text):
 def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30, worker_prompt_header="oneshot execution", auditor_prompt_header="oneshot auditor"):
     """Run the oneshot task with worker and auditor loop using provider objects."""
     from .providers import Provider
+    from .providers.activity_logger import ActivityLogger
 
     log_info(f"Starting oneshot with worker provider: {worker_provider.config.provider_type}, auditor provider: {auditor_provider.config.provider_type}")
     log_debug(f"Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"Prompt: {prompt}")
@@ -1152,169 +1153,185 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         with open(log_file, 'w') as f:
             json.dump(session_data, f, indent=2)
 
-    while iteration <= max_iterations:
-        print(f"\n--- 🤖 Worker: Iteration {iteration} ---")
-        log_info(f"Iteration {iteration}/{max_iterations}")
+    # Create activity logger for NDJSON logging
+    session_file_base = str(log_file.with_suffix(''))  # Remove extension for base path
+    activity_logger = ActivityLogger(session_file_base)
+    log_debug(f"Created activity logger for session: {session_file_base}")
 
-        # 1. Execute the Worker
-        log_verbose(f"Building worker prompt (header + task)")
-        full_prompt = get_worker_prompt(worker_prompt_header) + "\n\n" + prompt
-        log_debug(f"Full prompt length: {len(full_prompt)} chars")
-        dump_buffer("Worker Prompt", full_prompt, max_lines=10)
+    try:
+        while iteration <= max_iterations:
+            print(f"\n--- 🤖 Worker: Iteration {iteration} ---")
+            log_info(f"Iteration {iteration}/{max_iterations}")
 
-        log_verbose(f"Calling worker provider")
-        worker_output = worker_provider.generate(full_prompt)
-        dump_buffer("Worker Output", worker_output)
-        print(worker_output)
+            # 1. Execute the Worker
+            log_verbose(f"Building worker prompt (header + task)")
+            full_prompt = get_worker_prompt(worker_prompt_header) + "\n\n" + prompt
+            log_debug(f"Full prompt length: {len(full_prompt)} chars")
+            dump_buffer("Worker Prompt", full_prompt, max_lines=10)
 
-        # Log worker output to session file
-        log_verbose("Logging worker output to session file")
-        if use_markdown_logging:
-            # Append to markdown file
-            with open(log_file, 'a') as f:
-                f.write(f"\n--- 🤖 Worker: Iteration {iteration} ---\n")
-                f.write(strip_ansi(worker_output) + "\n")
-            session_data = None  # Not used for markdown
-        else:
-            # Use JSON format
-            with open(log_file, 'r') as f:
-                session_data = json.load(f)
+            log_verbose(f"Calling worker provider")
+            worker_output = worker_provider.generate(full_prompt, activity_logger)
+            dump_buffer("Worker Output", worker_output)
+            print(worker_output)
 
-            iteration_data = {"iteration": iteration, "worker_output": strip_ansi(worker_output)}
-            session_data["iterations"].append(iteration_data)
-
-            with open(log_file, 'w') as f:
-                json.dump(session_data, f, indent=2)
-
-        # 2. Summary Stats
-        if use_markdown_logging:
-            iteration_count = iteration
-        else:
-            iteration_count = len(session_data.get("iterations", []))
-        print(f"Log Size: {iteration_count} iteration(s).")
-        print("Last worker output:")
-        print('\n'.join(worker_output.split('\n')[-3:]))
-        log_debug(f"Session iterations: {iteration_count}")
-
-        # 3. Success Auditor Step
-        print("\n--- ⚖️ Auditor: Checking Progress ---")
-        log_verbose("Extracting JSON from worker output (lenient parsing)")
-
-        # Extract JSON from worker output using lenient parsing
-        worker_json, extraction_method = extract_lenient_json(worker_output)
-        log_info(f"JSON extraction method: {extraction_method}")
-        dump_buffer("Extracted Worker JSON", worker_json or "NO JSON FOUND", max_lines=15)
-
-        if not worker_json:
-            print(f"❌ No acceptable response found in worker output (method: {extraction_method})")
-            print("Worker said:", worker_output.split('\n')[:5])
-            log_info(f"No acceptable response extracted (method: {extraction_method}), skipping auditor")
-            iteration += 1
-            time.sleep(ITERATION_SLEEP)
-            continue
-
-        # Real Auditor Call
-        log_verbose(f"Preparing auditor prompt (extraction method: {extraction_method})")
-        if extraction_method == "strict":
-            audit_input = f"Original Task: {prompt}\n\nEvaluate this valid JSON response:\n\n{worker_json}"
-        else:
-            audit_input = f"Original Task: {prompt}\n\nEvaluate this response (parsed with {extraction_method} method):\n\n{worker_output}\n\nParsed as: {worker_json}"
-        full_auditor_prompt = get_auditor_prompt(auditor_prompt_header) + "\n\n" + audit_input
-        log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
-
-        log_verbose(f"Calling auditor provider")
-        audit_response = auditor_provider.generate(full_auditor_prompt)
-        dump_buffer("Auditor Response", audit_response)
-
-        # Log auditor response to session file
-        log_verbose("Logging auditor response to session file")
-        if use_markdown_logging:
-            # Append to markdown file
-            with open(log_file, 'a') as f:
-                f.write(f"\n--- ⚖️ Auditor: Iteration {iteration} ---\n")
-                f.write(strip_ansi(audit_response) + "\n")
-        else:
-            # Use JSON format
-            with open(log_file, 'r') as f:
-                session_data = json.load(f)
-
-            # Update the last iteration with auditor output
-            if session_data["iterations"]:
-                session_data["iterations"][-1]["auditor_output"] = strip_ansi(audit_response)
-
-            with open(log_file, 'w') as f:
-                json.dump(session_data, f, indent=2)
-
-        # Extract verdict from auditor response using lenient parsing
-        log_verbose("Extracting verdict from auditor response (lenient parsing)")
-        verdict, reason, advice = parse_lenient_verdict(audit_response)
-        log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
-
-        # Also try to extract JSON for backward compatibility and logging
-        auditor_json = extract_json(audit_response)
-        dump_buffer("Extracted Auditor JSON", auditor_json or "NO JSON FOUND", max_lines=10)
-
-        if not verdict:
-            log_info("Could not extract verdict from auditor response")
-
-        print(f"Auditor verdict: {verdict}")
-        if reason:
-            print(f"Reason: {reason}")
-
-        # Handle verdict
-        if verdict and verdict.upper() == "DONE":
-            print("✅ Auditor confirmed: DONE.")
-            log_info(f"Task completed successfully in {iteration} iteration(s)")
-
-            # Update session file with completion status
-            if not use_markdown_logging:
+            # Log worker output to session file
+            log_verbose("Logging worker output to session file")
+            if use_markdown_logging:
+                # Append to markdown file
+                with open(log_file, 'a') as f:
+                    f.write(f"\n--- 🤖 Worker: Iteration {iteration} ---\n")
+                    f.write(strip_ansi(worker_output) + "\n")
+                session_data = None  # Not used for markdown
+            else:
+                # Use JSON format
                 with open(log_file, 'r') as f:
                     session_data = json.load(f)
-                session_data["metadata"]["status"] = "completed"
-                session_data["metadata"]["completion_iteration"] = iteration
-                session_data["metadata"]["end_time"] = datetime.now().isoformat()
+
+                iteration_data = {"iteration": iteration, "worker_output": strip_ansi(worker_output)}
+                session_data["iterations"].append(iteration_data)
+
                 with open(log_file, 'w') as f:
                     json.dump(session_data, f, indent=2)
+
+            # 2. Summary Stats
+            if use_markdown_logging:
+                iteration_count = iteration
             else:
-                # Append completion status to markdown
+                iteration_count = len(session_data.get("iterations", []))
+            print(f"Log Size: {iteration_count} iteration(s).")
+            print("Last worker output:")
+            print('\n'.join(worker_output.split('\n')[-3:]))
+            log_debug(f"Session iterations: {iteration_count}")
+
+            # 3. Success Auditor Step
+            print("\n--- ⚖️ Auditor: Checking Progress ---")
+            log_verbose("Extracting JSON from worker output (lenient parsing)")
+
+            # Extract JSON from worker output using lenient parsing
+            worker_json, extraction_method = extract_lenient_json(worker_output)
+            log_info(f"JSON extraction method: {extraction_method}")
+            dump_buffer("Extracted Worker JSON", worker_json or "NO JSON FOUND", max_lines=15)
+
+            if not worker_json:
+                print(f"❌ No acceptable response found in worker output (method: {extraction_method})")
+                print("Worker said:", worker_output.split('\n')[:5])
+                log_info(f"No acceptable response extracted (method: {extraction_method}), skipping auditor")
+                iteration += 1
+                time.sleep(ITERATION_SLEEP)
+                continue
+
+            # Real Auditor Call
+            log_verbose(f"Preparing auditor prompt (extraction method: {extraction_method})")
+            if extraction_method == "strict":
+                audit_input = f"Original Task: {prompt}\n\nEvaluate this valid JSON response:\n\n{worker_json}"
+            else:
+                audit_input = f"Original Task: {prompt}\n\nEvaluate this response (parsed with {extraction_method} method):\n\n{worker_output}\n\nParsed as: {worker_json}"
+            full_auditor_prompt = get_auditor_prompt(auditor_prompt_header) + "\n\n" + audit_input
+            log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
+
+            log_verbose(f"Calling auditor provider")
+            audit_response = auditor_provider.generate(full_auditor_prompt, activity_logger)
+            dump_buffer("Auditor Response", audit_response)
+
+            # Log auditor response to session file
+            log_verbose("Logging auditor response to session file")
+            if use_markdown_logging:
+                # Append to markdown file
                 with open(log_file, 'a') as f:
-                    f.write(f"\n--- ✅ Task Completed in Iteration {iteration} ---\n")
+                    f.write(f"\n--- ⚖️ Auditor: Iteration {iteration} ---\n")
+                    f.write(strip_ansi(audit_response) + "\n")
+            else:
+                # Use JSON format
+                with open(log_file, 'r') as f:
+                    session_data = json.load(f)
 
-            # Clean up auto-generated session logs unless keep_log is True or session_log was specified
-            if auto_generated_log and not keep_log:
-                try:
-                    log_file.unlink()
-                    log_info(f"Cleaned up session log: {log_file}")
-                except Exception as e:
-                    log_info(f"Failed to clean up session log: {e}")
+                # Update the last iteration with auditor output
+                if session_data["iterations"]:
+                    session_data["iterations"][-1]["auditor_output"] = strip_ansi(audit_response)
 
-            return True
+                with open(log_file, 'w') as f:
+                    json.dump(session_data, f, indent=2)
 
-        elif verdict and verdict.upper() == "REITERATE":
-            print("🔄 Auditor suggested: REITERATE")
+            # Extract verdict from auditor response using lenient parsing
+            log_verbose("Extracting verdict from auditor response (lenient parsing)")
+            verdict, reason, advice = parse_lenient_verdict(audit_response)
+            log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
+
+            # Also try to extract JSON for backward compatibility and logging
+            auditor_json = extract_json(audit_response)
+            dump_buffer("Extracted Auditor JSON", auditor_json or "NO JSON FOUND", max_lines=10)
+
+            if not verdict:
+                log_info("Could not extract verdict from auditor response")
+
+            print(f"Auditor verdict: {verdict}")
             if reason:
-                print(f"Issue: {reason}")
-                prompt = f"{prompt}\n\n[Iteration {iteration} feedback: {reason}]"
+                print(f"Reason: {reason}")
 
-        else:
-            if TEST_MODE:
-                raise ValueError(f"Auditor verdict unclear: '{verdict}'")
-            print(f"❓ Auditor verdict unclear: '{verdict}'")
-            if auditor_json:
-                print(f"Auditor JSON: {auditor_json}")
-            print("Continuing anyway...")
+            # Handle verdict
+            if verdict and verdict.upper() == "DONE":
+                print("✅ Auditor confirmed: DONE.")
+                log_info(f"Task completed successfully in {iteration} iteration(s)")
+
+                # Update session file with completion status
+                if not use_markdown_logging:
+                    with open(log_file, 'r') as f:
+                        session_data = json.load(f)
+                    session_data["metadata"]["status"] = "completed"
+                    session_data["metadata"]["completion_iteration"] = iteration
+                    session_data["metadata"]["end_time"] = datetime.now().isoformat()
+                    with open(log_file, 'w') as f:
+                        json.dump(session_data, f, indent=2)
+                else:
+                    # Append completion status to markdown
+                    with open(log_file, 'a') as f:
+                        f.write(f"\n--- ✅ Task Completed in Iteration {iteration} ---\n")
+
+                # Clean up auto-generated session logs unless keep_log is True or session_log was specified
+                if auto_generated_log and not keep_log:
+                    try:
+                        log_file.unlink()
+                        log_info(f"Cleaned up session log: {log_file}")
+                    except Exception as e:
+                        log_info(f"Failed to clean up session log: {e}")
+
+                return True
+
+            elif verdict and verdict.upper() == "REITERATE":
+                print("🔄 Auditor suggested: REITERATE")
+                if reason:
+                    print(f"Issue: {reason}")
+                    prompt = f"{prompt}\n\n[Iteration {iteration} feedback: {reason}]"
+
+            else:
+                if TEST_MODE:
+                    raise ValueError(f"Auditor verdict unclear: '{verdict}'")
+                print(f"❓ Auditor verdict unclear: '{verdict}'")
+                if auditor_json:
+                    print(f"Auditor JSON: {auditor_json}")
+                print("Continuing anyway...")
 
         iteration += 1
         time.sleep(ITERATION_SLEEP)
 
-    msg = f"Max iterations ({max_iterations}) reached without completion. Session log retained at: {log_file}"
-    print(f"\n❌ {msg}")
-    log_info(msg)
+        msg = f"Max iterations ({max_iterations}) reached without completion. Session log retained at: {log_file}"
+        print(f"\n❌ {msg}")
+        log_info(msg)
 
-    # Always retain session logs on failure (don't clean up)
-    # Note: keep_log parameter only affects successful completion cleanup
+        # Always retain session logs on failure (don't clean up)
+        # Note: keep_log parameter only affects successful completion cleanup
 
-    return False
+        return False
+
+    except Exception as e:
+        # Re-raise any exceptions that occur in the try block
+        raise
+
+    finally:
+        # Finalize activity logger (close files, cleanup empty logs)
+        if 'activity_logger' in locals():
+            activity_logger.finalize_log()
+            log_debug("Finalized activity logger")
 
 
 async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_iterations,

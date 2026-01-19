@@ -69,12 +69,12 @@ class Provider(ABC):
         self.config = config
 
     @abstractmethod
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, activity_logger=None) -> str:
         """Generate a response synchronously."""
         pass
 
     @abstractmethod
-    async def generate_async(self, prompt: str) -> str:
+    async def generate_async(self, prompt: str, activity_logger=None) -> str:
         """Generate a response asynchronously."""
         pass
 
@@ -86,7 +86,7 @@ class Provider(ABC):
 class ExecutorProvider(Provider):
     """Provider that wraps subprocess executor calls (claude, cline) and direct executors (aider, gemini)."""
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, activity_logger=None) -> str:
         """Call executor subprocess synchronously."""
         from oneshot.oneshot import call_executor, log_debug
 
@@ -104,10 +104,11 @@ class ExecutorProvider(Provider):
                 executor=self.config.executor,
                 initial_timeout=self.config.timeout,
                 max_timeout=3600,  # Default max timeout
-                activity_interval=30  # Default activity interval
+                activity_interval=30,  # Default activity interval
+                activity_logger=activity_logger
             )
 
-    async def generate_async(self, prompt: str) -> str:
+    async def generate_async(self, prompt: str, activity_logger=None) -> str:
         """Call executor subprocess asynchronously."""
         from oneshot.oneshot import call_executor_async, log_debug
 
@@ -125,7 +126,8 @@ class ExecutorProvider(Provider):
                 executor=self.config.executor,
                 initial_timeout=self.config.timeout,
                 max_timeout=3600,
-                activity_interval=30
+                activity_interval=30,
+                activity_logger=activity_logger
             )
 
     def _call_aider_executor(self, prompt: str) -> str:

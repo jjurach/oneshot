@@ -6,6 +6,7 @@ information while filtering sensitive metadata (costs, tokens, usage stats).
 Converts raw output into structured activity events suitable for UI display.
 """
 
+import json
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
@@ -259,17 +260,41 @@ class ActivityInterpreter:
 
         return events
 
-    def interpret_activity(self, raw_output: str) -> List[ActivityEvent]:
+    def interpret_activity(self, raw_output: str, activity_logger=None) -> List[ActivityEvent]:
         """
         Interpret executor output and extract meaningful activity patterns.
 
         Args:
             raw_output: Raw output from Claude executor
+            activity_logger: Optional ActivityLogger to log raw JSON activities
 
         Returns:
             List of structured activity events
         """
         events = []
+
+        # Parse streaming JSON to extract raw activities for logging
+        json_objects = []
+        if activity_logger:
+            try:
+                # Try to parse raw_output as streaming JSON
+                lines = raw_output.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    try:
+                        obj = json.loads(line)
+                        json_objects.append(obj)
+                        # Log each valid JSON object to NDJSON file
+                        activity_logger.log_json_line(line)
+                    except json.JSONDecodeError:
+                        # Continue to next line, don't log malformed JSON
+                        pass
+            except Exception as e:
+                # If JSON parsing fails completely, skip logging for this output
+                pass
 
         # Filter metadata first to get clean output for analysis
         filtered = self.filter_metadata(raw_output)
