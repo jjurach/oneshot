@@ -402,17 +402,28 @@ SESSION_DIR = Path.cwd()
 SESSION_LOG_NAME = "session_summary.md"
 ITERATION_SLEEP = 2
 
-WORKER_PREFIX = """
+def get_worker_prompt(header: str = "oneshot execution") -> str:
+    """
+    Generate the worker prompt with a customizable header.
+
+    Args:
+        header: Custom header to prepend to the prompt
+
+    Returns:
+        Complete worker prompt string
+    """
+    return f"""{header}
+
 IMPORTANT: Provide your final answer in valid JSON format when possible. Include completion indicators like "DONE", "success", or "status" even in non-JSON responses.
 
 PREFERRED FORMAT (valid JSON):
-{
+{{
   "status": "DONE",
   "result": "<your answer/output here>",
   "confidence": "<high/medium/low>",
   "validation": "<how you verified this answer - sources, output shown, reasoning explained>",
   "execution_proof": "<what you actually did - optional if no external tools were used>"
-}
+}}
 
 ALTERNATIVE: If JSON is difficult, include clear completion indicators:
 - Words like "DONE", "success", "completed", "finished"
@@ -431,7 +442,21 @@ IMPORTANT GUIDANCE:
 Complete this task:
 """
 
-AUDITOR_PROMPT = """
+# Backward compatibility: default WORKER_PREFIX constant
+WORKER_PREFIX = get_worker_prompt()
+
+def get_auditor_prompt(header: str = "oneshot auditor") -> str:
+    """
+    Generate the auditor prompt with a customizable header.
+
+    Args:
+        header: Custom header to prepend to the prompt
+
+    Returns:
+        Complete auditor prompt string
+    """
+    return f"""{header}
+
 You are a Success Auditor. Evaluate the worker's response with TRUST by default, accepting both valid JSON and responses with clear completion indicators.
 
 The original task and project context should guide your evaluation of what "DONE" means. Be lenient and trust the worker's judgment unless there are clear, serious issues.
@@ -455,18 +480,18 @@ TRUST the worker by default:
 - Look for completion indicators: DONE, success, completed, finished, etc.
 
 Examples of ACCEPTABLE responses:
-- Valid JSON: {"status": "DONE", "result": "Task completed"}
-- Malformed JSON: {status: "success", result: "Answer here"}
+- Valid JSON: {{"status": "DONE", "result": "Task completed"}}
+- Malformed JSON: {{status: "success", result: "Answer here"}}
 - Plain text: "Task completed successfully. The answer is..."
-- Mixed: "DONE\n{\"result\": \"Answer\", \"status\": \"complete\"}"
+- Mixed: "DONE\n{{"result\": \"Answer\", \"status\": \"complete\"}}"
 
 Use the original task context to provide helpful feedback if reiteration is needed.
 
 PREFERRED FORMAT (JSON):
-{
+{{
   "verdict": "DONE",
   "reason": "<brief explanation>"
-}
+}}
 
 ALTERNATIVE: If JSON is difficult, include clear completion indicators:
 - "status": "DONE" or "verdict": "DONE" patterns
@@ -475,6 +500,9 @@ ALTERNATIVE: If JSON is difficult, include clear completion indicators:
 
 The system will accept both valid JSON and responses with clear completion indicators.
 """
+
+# Backward compatibility: default AUDITOR_PROMPT constant
+AUDITOR_PROMPT = get_auditor_prompt()
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -1032,7 +1060,7 @@ def strip_ansi(text):
 # ============================================================================
 
 
-def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30):
+def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30, worker_prompt_header="oneshot execution", auditor_prompt_header="oneshot auditor"):
     """Run the oneshot task with worker and auditor loop using provider objects."""
     from .providers import Provider
 
@@ -1129,8 +1157,8 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         log_info(f"Iteration {iteration}/{max_iterations}")
 
         # 1. Execute the Worker
-        log_verbose(f"Building worker prompt (prefix + task)")
-        full_prompt = WORKER_PREFIX + prompt
+        log_verbose(f"Building worker prompt (header + task)")
+        full_prompt = get_worker_prompt(worker_prompt_header) + "\n\n" + prompt
         log_debug(f"Full prompt length: {len(full_prompt)} chars")
         dump_buffer("Worker Prompt", full_prompt, max_lines=10)
 
@@ -1191,7 +1219,7 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
             audit_input = f"Original Task: {prompt}\n\nEvaluate this valid JSON response:\n\n{worker_json}"
         else:
             audit_input = f"Original Task: {prompt}\n\nEvaluate this response (parsed with {extraction_method} method):\n\n{worker_output}\n\nParsed as: {worker_json}"
-        full_auditor_prompt = AUDITOR_PROMPT + "\n\n" + audit_input
+        full_auditor_prompt = get_auditor_prompt(auditor_prompt_header) + "\n\n" + audit_input
         log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
 
         log_verbose(f"Calling auditor provider")
@@ -1495,7 +1523,8 @@ def count_iterations(log_file):
 
 def run_oneshot_legacy(prompt, worker_model, auditor_model, max_iterations, executor="claude",
                        resume=False, session_file=None, session_log=None, keep_log=False,
-                       initial_timeout=300, max_timeout=3600, activity_interval=30):
+                       initial_timeout=300, max_timeout=3600, activity_interval=30,
+                       worker_prompt_header="oneshot execution", auditor_prompt_header="oneshot auditor"):
     """
     Backward-compatible wrapper that accepts model strings and creates providers.
 
@@ -1522,6 +1551,12 @@ def run_oneshot_legacy(prompt, worker_model, auditor_model, max_iterations, exec
     # Create provider instances
     worker_provider = create_provider(worker_config)
     auditor_provider = create_provider(auditor_config)
+
+    # Set custom headers on providers if they support it
+    if hasattr(worker_provider, 'set_worker_prompt_header'):
+        worker_provider.set_worker_prompt_header(worker_prompt_header)
+    if hasattr(auditor_provider, 'set_auditor_prompt_header'):
+        auditor_provider.set_auditor_prompt_header(auditor_prompt_header)
 
     # Call the new provider-based run_oneshot
     return run_oneshot(
@@ -1589,6 +1624,13 @@ async def run_oneshot_async_legacy(prompt, worker_model, auditor_model, max_iter
 
 
 def main():
+    from .config import get_global_config
+
+    # Load configuration
+    config, config_error = get_global_config()
+    if config_error:
+        print(f"Warning: Configuration error: {config_error}", file=sys.stderr)
+
     parser = argparse.ArgumentParser(
         description='Oneshot - Autonomous task completion with auditor validation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1596,8 +1638,13 @@ def main():
 Examples:
   oneshot 'What is the capital of Denmark?'
   oneshot --worker-model claude-3-5-sonnet-20241022 'Complex task'
+  oneshot --worker-prompt-header "custom project" 'Task with custom header'
   oneshot --resume 'Continue working on this'
   oneshot --session-log my_task.md 'Task with custom logging'
+
+Configuration:
+  Create ~/.oneshot.json or .oneshotrc to set default values.
+  Command-line options override configuration file settings.
         """
     )
 
@@ -1609,18 +1656,32 @@ Examples:
     parser.add_argument(
         '--max-iterations',
         type=int,
-        default=DEFAULT_MAX_ITERATIONS,
-        help=f'Maximum iterations (default: {DEFAULT_MAX_ITERATIONS})'
+        default=config['max_iterations'],
+        help=f'Maximum iterations (default: {config["max_iterations"]})'
     )
 
     parser.add_argument(
         '--worker-model',
+        default=config['worker_model'],
         help='Model for worker (defaults vary by executor)'
     )
 
     parser.add_argument(
         '--auditor-model',
+        default=config['auditor_model'],
         help='Model for auditor (defaults vary by executor)'
+    )
+
+    parser.add_argument(
+        '--worker-prompt-header',
+        default=config['worker_prompt_header'],
+        help=f'Custom header for worker prompts (default: "{config["worker_prompt_header"]}")'
+    )
+
+    parser.add_argument(
+        '--auditor-prompt-header',
+        default=config['auditor_prompt_header'],
+        help=f'Custom header for auditor prompts (default: "{config["auditor_prompt_header"]}")'
     )
 
     parser.add_argument(
@@ -1661,30 +1722,30 @@ Examples:
 
     parser.add_argument(
         '--executor',
-        default='cline',
+        default=config['executor'],
         choices=['claude', 'cline', 'aider', 'gemini'],
-        help='Which executor to use: claude, cline, aider, or gemini (default: cline)'
+        help=f'Which executor to use: claude, cline, aider, or gemini (default: {config["executor"]})'
     )
 
     parser.add_argument(
         '--initial-timeout',
         type=int,
-        default=300,
-        help='Initial timeout in seconds before activity monitoring (default: 300)'
+        default=config['initial_timeout'],
+        help=f'Initial timeout in seconds before activity monitoring (default: {config["initial_timeout"]})'
     )
 
     parser.add_argument(
         '--max-timeout',
         type=int,
-        default=3600,
-        help='Maximum timeout in seconds with activity monitoring (default: 3600)'
+        default=config['max_timeout'],
+        help=f'Maximum timeout in seconds with activity monitoring (default: {config["max_timeout"]})'
     )
 
     parser.add_argument(
         '--activity-interval',
         type=int,
-        default=30,
-        help='Activity check interval in seconds (default: 30)'
+        default=config['activity_interval'],
+        help=f'Activity check interval in seconds (default: {config["activity_interval"]})'
     )
 
     parser.add_argument(
@@ -1692,6 +1753,12 @@ Examples:
         type=str,
         default=None,
         help='Directory to store session logs (default: current directory)'
+    )
+
+    parser.add_argument(
+        '--config',
+        type=str,
+        help='Path to custom configuration file (overrides default locations)'
     )
 
     args = parser.parse_args()
@@ -1780,7 +1847,9 @@ Examples:
         keep_log=args.keep_log,
         initial_timeout=args.initial_timeout,
         max_timeout=args.max_timeout,
-        activity_interval=args.activity_interval
+        activity_interval=args.activity_interval,
+        worker_prompt_header=args.worker_prompt_header,
+        auditor_prompt_header=args.auditor_prompt_header
     )
 
     sys.exit(0 if success else 1)

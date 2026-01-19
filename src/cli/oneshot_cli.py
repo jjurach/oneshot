@@ -77,6 +77,18 @@ Configuration:
     )
 
     parser.add_argument(
+        '--worker-prompt-header',
+        default=config['worker_prompt_header'],
+        help=f'Custom header for worker prompts (default: "{config["worker_prompt_header"]}")'
+    )
+
+    parser.add_argument(
+        '--auditor-prompt-header',
+        default=config['auditor_prompt_header'],
+        help=f'Custom header for auditor prompts (default: "{config["auditor_prompt_header"]}")'
+    )
+
+    parser.add_argument(
         '--resume',
         action='store_true',
         help='Resume the latest existing session'
@@ -426,7 +438,9 @@ Configuration:
                     keep_log=args.keep_log,
                     initial_timeout=args.initial_timeout,
                     max_timeout=args.max_timeout,
-                    activity_interval=args.activity_interval
+                    activity_interval=args.activity_interval,
+                    worker_prompt_header=args.worker_prompt_header,
+                    auditor_prompt_header=args.auditor_prompt_header
                 )
         except Exception as e:
             log_info(f"Async execution error: {e}")
@@ -468,7 +482,9 @@ Configuration:
                 keep_log=args.keep_log,
                 initial_timeout=args.initial_timeout,
                 max_timeout=args.max_timeout,
-                activity_interval=args.activity_interval
+                activity_interval=args.activity_interval,
+                worker_prompt_header=args.worker_prompt_header,
+                auditor_prompt_header=args.auditor_prompt_header
             )
 
     sys.exit(0 if success else 1)
