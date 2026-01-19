@@ -887,10 +887,15 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
     log_info(f"Starting oneshot with worker provider: {worker_provider.config.provider_type}, auditor provider: {auditor_provider.config.provider_type}")
     log_debug(f"Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"Prompt: {prompt}")
 
-    # Determine session file
+    # Determine session file - use markdown for custom session logs, JSON for auto-generated
     auto_generated_log = False
+    use_markdown_logging = False
+
     if session_log:
         log_file = Path(session_log)
+        # Check if it's a markdown file (custom session log)
+        if log_file.suffix.lower() == '.md':
+            use_markdown_logging = True
         if log_file.exists():
             session_context = read_session_context(log_file)
             iteration = count_iterations(log_file) + 1
@@ -902,9 +907,30 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
             session_context = None
             iteration = 1
             mode = 'w'
-            log_info(f"Creating new session: {log_file.name}")
-            with open(log_file, mode) as f:
-                f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
+            if use_markdown_logging:
+                log_info(f"Creating new markdown session: {log_file.name}")
+                with open(log_file, mode) as f:
+                    f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
+            else:
+                log_info(f"Creating new JSON session: {log_file.name}")
+                # Initialize JSON session log structure for custom JSON logs
+                session_data = {
+                    "metadata": {
+                        "timestamp": datetime.now().isoformat(),
+                        "prompt": prompt,
+                        "worker_provider": worker_provider.config.provider_type,
+                        "worker_executor": getattr(worker_provider.config, 'executor', None),
+                        "worker_model": worker_provider.config.model,
+                        "auditor_provider": auditor_provider.config.provider_type,
+                        "auditor_executor": getattr(auditor_provider.config, 'executor', None),
+                        "auditor_model": auditor_provider.config.model,
+                        "max_iterations": max_iterations,
+                        "working_directory": str(Path.cwd())
+                    },
+                    "iterations": []
+                }
+                with open(log_file, 'w') as f:
+                    json.dump(session_data, f, indent=2)
     elif resume and session_file:
         log_file = session_file
         session_context = read_session_context(log_file)
@@ -914,6 +940,9 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         log_verbose(f"Session context length: {len(session_context) if session_context else 0} chars")
         # Append to existing log
         mode = 'a'
+        # Check if it's markdown based on content or extension
+        if log_file.suffix.lower() == '.md':
+            use_markdown_logging = True
     else:
         auto_generated_log = True
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -958,19 +987,30 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         dump_buffer("Worker Output", worker_output)
         print(worker_output)
 
-        # Log worker output to JSON
+        # Log worker output to session file
         log_verbose("Logging worker output to session file")
-        with open(log_file, 'r') as f:
-            session_data = json.load(f)
+        if use_markdown_logging:
+            # Append to markdown file
+            with open(log_file, 'a') as f:
+                f.write(f"\n--- 🤖 Worker: Iteration {iteration} ---\n")
+                f.write(strip_ansi(worker_output) + "\n")
+            session_data = None  # Not used for markdown
+        else:
+            # Use JSON format
+            with open(log_file, 'r') as f:
+                session_data = json.load(f)
 
-        iteration_data = {"iteration": iteration, "worker_output": strip_ansi(worker_output)}
-        session_data["iterations"].append(iteration_data)
+            iteration_data = {"iteration": iteration, "worker_output": strip_ansi(worker_output)}
+            session_data["iterations"].append(iteration_data)
 
-        with open(log_file, 'w') as f:
-            json.dump(session_data, f, indent=2)
+            with open(log_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
 
         # 2. Summary Stats
-        iteration_count = len(session_data.get("iterations", []))
+        if use_markdown_logging:
+            iteration_count = iteration
+        else:
+            iteration_count = len(session_data.get("iterations", []))
         print(f"Log Size: {iteration_count} iteration(s).")
         print("Last worker output:")
         print('\n'.join(worker_output.split('\n')[-3:]))
@@ -1006,17 +1046,24 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
         audit_response = auditor_provider.generate(full_auditor_prompt)
         dump_buffer("Auditor Response", audit_response)
 
-        # Log auditor response to JSON
+        # Log auditor response to session file
         log_verbose("Logging auditor response to session file")
-        with open(log_file, 'r') as f:
-            session_data = json.load(f)
+        if use_markdown_logging:
+            # Append to markdown file
+            with open(log_file, 'a') as f:
+                f.write(f"\n--- ⚖️ Auditor: Iteration {iteration} ---\n")
+                f.write(strip_ansi(audit_response) + "\n")
+        else:
+            # Use JSON format
+            with open(log_file, 'r') as f:
+                session_data = json.load(f)
 
-        # Update the last iteration with auditor output
-        if session_data["iterations"]:
-            session_data["iterations"][-1]["auditor_output"] = strip_ansi(audit_response)
+            # Update the last iteration with auditor output
+            if session_data["iterations"]:
+                session_data["iterations"][-1]["auditor_output"] = strip_ansi(audit_response)
 
-        with open(log_file, 'w') as f:
-            json.dump(session_data, f, indent=2)
+            with open(log_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
 
         # Extract verdict from auditor response using lenient parsing
         log_verbose("Extracting verdict from auditor response (lenient parsing)")
@@ -1039,14 +1086,19 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
             print("✅ Auditor confirmed: DONE.")
             log_info(f"Task completed successfully in {iteration} iteration(s)")
 
-            # Update JSON with completion status
-            with open(log_file, 'r') as f:
-                session_data = json.load(f)
-            session_data["metadata"]["status"] = "completed"
-            session_data["metadata"]["completion_iteration"] = iteration
-            session_data["metadata"]["end_time"] = datetime.now().isoformat()
-            with open(log_file, 'w') as f:
-                json.dump(session_data, f, indent=2)
+            # Update session file with completion status
+            if not use_markdown_logging:
+                with open(log_file, 'r') as f:
+                    session_data = json.load(f)
+                session_data["metadata"]["status"] = "completed"
+                session_data["metadata"]["completion_iteration"] = iteration
+                session_data["metadata"]["end_time"] = datetime.now().isoformat()
+                with open(log_file, 'w') as f:
+                    json.dump(session_data, f, indent=2)
+            else:
+                # Append completion status to markdown
+                with open(log_file, 'a') as f:
+                    f.write(f"\n--- ✅ Task Completed in Iteration {iteration} ---\n")
 
             # Clean up auto-generated session logs unless keep_log is True or session_log was specified
             if auto_generated_log and not keep_log:
@@ -1276,21 +1328,10 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
 
 
 def count_iterations(log_file):
-    """Count iterations in existing session. Supports both JSON and markdown formats."""
+    """Count iterations in existing session."""
     try:
-        session_path = Path(log_file)
-        with open(session_path, 'r') as f:
+        with open(log_file, 'r') as f:
             content = f.read()
-
-        # If JSON format, count iterations from the data structure
-        if session_path.suffix == '.json' or content.strip().startswith('{'):
-            try:
-                data = json.loads(content)
-                return len(data.get('iterations', []))
-            except json.JSONDecodeError:
-                pass
-
-        # If markdown format, count iteration headers
         return len(re.findall(r'^## Iteration \d+', content, re.MULTILINE))
     except:
         return 0
