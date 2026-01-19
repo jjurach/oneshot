@@ -3,7 +3,7 @@
 Provider abstraction layer for oneshot.
 
 Supports two provider types:
-- executor: Subprocess-based executors (claude, cline)
+- executor: Subprocess-based executors (claude, cline, aider)
 - direct: Direct HTTP API calls to OpenAI-compatible endpoints
 """
 
@@ -15,6 +15,13 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 import os
 
+# Import executors from submodules
+from .base import BaseExecutor, ExecutionResult
+from .aider_executor import AiderExecutor
+from .gemini_executor import GeminiCLIExecutor
+from .logging import ProviderLogger
+from .utils import run_command, map_api_keys
+
 
 # ============================================================================
 # PROVIDER CONFIGURATION
@@ -25,7 +32,7 @@ class ProviderConfig:
     """Configuration for a provider with validation."""
 
     provider_type: str  # "executor" or "direct"
-    executor: Optional[str] = None  # For executor provider: "claude" or "cline"
+    executor: Optional[str] = None  # For executor provider: "claude", "cline", or "aider"
     model: Optional[str] = None
     endpoint: Optional[str] = None  # For direct provider
     api_key: Optional[str] = None  # Optional for local models
@@ -38,12 +45,16 @@ class ProviderConfig:
 
         if self.provider_type == "executor":
             if not self.executor:
-                raise ValueError("executor provider requires 'executor' field (claude or cline)")
-            if self.executor not in ["claude", "cline"]:
-                raise ValueError(f"executor must be 'claude' or 'cline', got: {self.executor}")
+                raise ValueError("executor provider requires 'executor' field (claude, cline, or aider)")
+            if self.executor not in ["claude", "cline", "aider"]:
+                raise ValueError(f"executor must be 'claude', 'cline', or 'aider', got: {self.executor}")
             # For claude executor, model is required
             if self.executor == "claude" and not self.model:
                 raise ValueError("claude executor requires 'model' field")
+            # For aider executor, model is optional (aider has built-in default)
+            if self.executor == "aider" and self.model:
+                # Warn if model is provided, but don't error
+                pass
 
         elif self.provider_type == "direct":
             if not self.endpoint:
@@ -78,37 +89,61 @@ class Provider(ABC):
 # ============================================================================
 
 class ExecutorProvider(Provider):
-    """Provider that wraps subprocess executor calls (claude, cline)."""
+    """Provider that wraps subprocess executor calls (claude, cline) and aider executor."""
 
     def generate(self, prompt: str) -> str:
         """Call executor subprocess synchronously."""
-        from .oneshot import call_executor, log_debug
+        from oneshot.oneshot import call_executor, log_debug
 
-        log_debug(f"ExecutorProvider calling {self.config.executor} with model: {self.config.model}")
-
-        return call_executor(
-            prompt=prompt,
-            model=self.config.model,
-            executor=self.config.executor,
-            initial_timeout=self.config.timeout,
-            max_timeout=3600,  # Default max timeout
-            activity_interval=30  # Default activity interval
-        )
+        if self.config.executor == "aider":
+            log_debug(f"ExecutorProvider calling aider executor")
+            return self._call_aider_executor(prompt)
+        else:
+            log_debug(f"ExecutorProvider calling {self.config.executor} with model: {self.config.model}")
+            return call_executor(
+                prompt=prompt,
+                model=self.config.model,
+                executor=self.config.executor,
+                initial_timeout=self.config.timeout,
+                max_timeout=3600,  # Default max timeout
+                activity_interval=30  # Default activity interval
+            )
 
     async def generate_async(self, prompt: str) -> str:
         """Call executor subprocess asynchronously."""
-        from .oneshot import call_executor_async, log_debug
+        from oneshot.oneshot import call_executor_async, log_debug
 
-        log_debug(f"ExecutorProvider async calling {self.config.executor} with model: {self.config.model}")
+        if self.config.executor == "aider":
+            log_debug(f"ExecutorProvider async calling aider executor")
+            return self._call_aider_executor(prompt)
+        else:
+            log_debug(f"ExecutorProvider async calling {self.config.executor} with model: {self.config.model}")
+            return await call_executor_async(
+                prompt=prompt,
+                model=self.config.model,
+                executor=self.config.executor,
+                initial_timeout=self.config.timeout,
+                max_timeout=3600,
+                activity_interval=30
+            )
 
-        return await call_executor_async(
-            prompt=prompt,
-            model=self.config.model,
-            executor=self.config.executor,
-            initial_timeout=self.config.timeout,
-            max_timeout=3600,
-            activity_interval=30
-        )
+    def _call_aider_executor(self, prompt: str) -> str:
+        """Call the aider executor directly."""
+        from oneshot.oneshot import log_debug
+
+        try:
+            # Use AiderExecutor from this package
+            executor = AiderExecutor()
+            result = executor.run_task(prompt)
+
+            if result.success:
+                return result.output
+            else:
+                error_msg = result.error or "Aider execution failed"
+                return f"ERROR: {error_msg}\n\nOutput:\n{result.output}"
+        except Exception as e:
+            log_debug(f"Aider executor error: {e}")
+            return f"ERROR: Failed to run aider executor: {e}"
 
 
 # ============================================================================
@@ -171,7 +206,7 @@ class DirectProvider(Provider):
 
     def generate(self, prompt: str) -> str:
         """Make synchronous HTTP request to API endpoint."""
-        from .oneshot import log_debug, log_verbose
+        from oneshot.oneshot import log_debug, log_verbose
 
         log_debug(f"DirectProvider calling {self.config.endpoint} with model: {self.config.model}")
         log_debug(f"Prompt length: {len(prompt)} chars")
@@ -208,7 +243,7 @@ class DirectProvider(Provider):
 
     async def generate_async(self, prompt: str) -> str:
         """Make asynchronous HTTP request to API endpoint."""
-        from .oneshot import log_debug, log_verbose
+        from oneshot.oneshot import log_debug, log_verbose
 
         log_debug(f"DirectProvider async calling {self.config.endpoint} with model: {self.config.model}")
         log_debug(f"Prompt length: {len(prompt)} chars")
@@ -283,3 +318,25 @@ def create_direct_provider(endpoint: str, model: str, api_key: Optional[str] = N
         timeout=timeout
     )
     return create_provider(config)
+
+
+# ============================================================================
+# EXPORTS
+# ============================================================================
+
+__all__ = [
+    'BaseExecutor',
+    'ExecutionResult',
+    'AiderExecutor',
+    'GeminiCLIExecutor',
+    'ProviderLogger',
+    'ProviderConfig',
+    'Provider',
+    'ExecutorProvider',
+    'DirectProvider',
+    'create_provider',
+    'create_executor_provider',
+    'create_direct_provider',
+    'run_command',
+    'map_api_keys'
+]

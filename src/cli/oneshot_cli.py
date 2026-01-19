@@ -115,8 +115,8 @@ Configuration:
     parser.add_argument(
         '--executor',
         default=config['executor'],
-        choices=['claude', 'cline'],
-        help=f'Which executor to use: claude or cline (default: {config["executor"]})'
+        choices=['claude', 'cline', 'aider'],
+        help=f'Which executor to use: claude, cline, or aider (default: {config["executor"]})'
     )
 
     parser.add_argument(
@@ -288,6 +288,9 @@ Configuration:
                     print("Model selection is not supported for the cline executor. Please configure the model in the cline tool.", file=sys.stderr)
                     sys.exit(1)
                 model = None
+            elif executor == "aider":
+                # Aider uses built-in default, but model can be overridden if needed
+                model = args.worker_model
 
             worker_config = ProviderConfig(
                 provider_type='executor',
@@ -325,6 +328,9 @@ Configuration:
                     print("Model selection is not supported for the cline executor. Please configure the model in the cline tool.", file=sys.stderr)
                     sys.exit(1)
                 model = None
+            elif executor == "aider":
+                # Aider uses built-in default, but model can be overridden if needed
+                model = args.auditor_model
 
             auditor_config = ProviderConfig(
                 provider_type='executor',
@@ -342,6 +348,10 @@ Configuration:
             if args.worker_model or args.auditor_model:
                 print("Model selection is not supported for the cline executor. Please configure the model in the cline tool.", file=sys.stderr)
                 sys.exit(1)
+            args.worker_model = None
+            args.auditor_model = None
+        elif args.executor == "aider":
+            # Aider executor uses built-in models, no model selection needed via CLI
             args.worker_model = None
             args.auditor_model = None
         else:  # claude
@@ -476,16 +486,9 @@ Configuration:
 
 
 def main():
-    """Synchronous wrapper for backward compatibility."""
-    # Check if --async flag is used
-    import sys
-    if '--async' in sys.argv:
-        # Run async version
-        asyncio.run(main_async())
-    else:
-        # Run sync version
-        from oneshot.oneshot import main as sync_main
-        sync_main()
+    """Entry point that routes to async main (which handles both async and sync)."""
+    # Always use main_async, which handles both --async mode and sync mode
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":
