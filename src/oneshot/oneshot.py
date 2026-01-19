@@ -84,7 +84,8 @@ SUPPORTS_PTY = platform.system() in ('Linux', 'Darwin')  # Unix/Linux and macOS
 
 def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                        timeout: Optional[float] = None,
-                       buffer_size: int = 1024) -> Tuple[str, str, int]:
+                       buffer_size: int = 1024,
+                       accumulation_buffer_size: int = 4096) -> Tuple[str, str, int]:
     """
     Execute command using PTY allocation for real-time streaming output.
 
@@ -96,6 +97,7 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
         input_data: Optional stdin data for the process
         timeout: Subprocess timeout in seconds
         buffer_size: Size of read buffer (1024 bytes typical for line-buffered output)
+        accumulation_buffer_size: Size of accumulation buffer before activity processing (4096 bytes)
 
     Returns:
         Tuple of (stdout, stderr, exit_code)
@@ -119,6 +121,10 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
 
         stdout_data = []
         stderr_data = []
+        accumulation_buffer = []  # Buffer for accumulating chunks before processing
+        buffer_total_bytes = 0
+        chunk_count = 0
+        exit_code = 1  # Default exit code
         start_time = time.time()
 
         try:
@@ -146,7 +152,8 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                 os.close(slave_fd)
                 log_debug(f"Child process spawned with PID {pid}")
 
-                # Read output from master PTY
+                # Read output from master PTY with chunk accumulation
+                process_exited = False
                 while True:
                     # Check timeout
                     if timeout is not None:
@@ -157,14 +164,24 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                             raise subprocess.TimeoutExpired(cmd[0], timeout)
 
                     # Check if process is done
-                    try:
-                        wpid, status = os.waitpid(pid, os.WNOHANG)
-                        if wpid == pid:
-                            exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
-                            log_debug(f"Process exited with code {exit_code}")
+                    if not process_exited:
+                        try:
+                            wpid, status = os.waitpid(pid, os.WNOHANG)
+                            if wpid == pid:
+                                exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+                                log_debug(f"Process exited with code {exit_code}")
+                                process_exited = True
+
+                                # Flush any remaining accumulated data
+                                if accumulation_buffer:
+                                    accumulated_text = ''.join(accumulation_buffer)
+                                    stdout_data.append(accumulated_text)
+                                    if VERBOSITY >= 1:
+                                        log_verbose(f"[Accumulate] Flushed {len(accumulated_text)} chars ({len(accumulation_buffer)} chunks) on process exit")
+                                    accumulation_buffer = []
+                                    buffer_total_bytes = 0
+                        except OSError:
                             break
-                    except OSError:
-                        break
 
                     # Read available data with select for non-blocking I/O
                     try:
@@ -173,10 +190,71 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                             try:
                                 data = os.read(master_fd, buffer_size)
                                 if data:
-                                    stdout_data.append(data.decode('utf-8', errors='replace'))
+                                    chunk_count += 1
+                                    chunk_text = data.decode('utf-8', errors='replace')
+                                    accumulation_buffer.append(chunk_text)
+                                    buffer_total_bytes += len(chunk_text)
+
+                                    # Enhanced logging with more details
                                     if VERBOSITY >= 2:
-                                        log_debug(f"[Stream] {len(data)} bytes received")
+                                        log_debug(f"[Chunk #{chunk_count}] {len(data)} bytes received, buffer now {buffer_total_bytes} chars")
+                                        # Show preview of chunk content (first 50 chars)
+                                        preview = chunk_text.replace('\n', '\\n').replace('\r', '\\r')[:50]
+                                        log_debug(f"[Chunk Content] {preview}{'...' if len(chunk_text) > 50 else ''}")
+                                    elif VERBOSITY >= 1:
+                                        log_verbose(f"[Stream] Chunk #{chunk_count}: {len(data)} bytes, total buffered: {buffer_total_bytes}")
+
+                                    # Check if we should flush the accumulation buffer
+                                    should_flush = False
+
+                                    # Flush on accumulation buffer size limit
+                                    if buffer_total_bytes >= accumulation_buffer_size:
+                                        should_flush = True
+                                        flush_reason = f"buffer size limit ({accumulation_buffer_size} chars)"
+                                    # Flush on complete lines (good boundary for text output)
+                                    elif '\n' in chunk_text and buffer_total_bytes > 100:
+                                        should_flush = True
+                                        flush_reason = "line boundary detected"
+                                    # Flush on JSON object boundaries (for structured output)
+                                    elif ('}' in chunk_text or '{' in chunk_text) and buffer_total_bytes > 50:
+                                        # Check if we have a complete JSON object
+                                        accumulated_text = ''.join(accumulation_buffer)
+                                        try:
+                                            json.loads(accumulated_text.strip())
+                                            should_flush = True
+                                            flush_reason = "complete JSON object detected"
+                                        except json.JSONDecodeError:
+                                            # Check for multiple JSON objects
+                                            lines = accumulated_text.split('\n')
+                                            complete_objects = 0
+                                            for line in lines:
+                                                line = line.strip()
+                                                if line and (line.startswith('{') and line.endswith('}')):
+                                                    try:
+                                                        json.loads(line)
+                                                        complete_objects += 1
+                                                    except json.JSONDecodeError:
+                                                        pass
+                                            if complete_objects > 0:
+                                                should_flush = True
+                                                flush_reason = f"{complete_objects} complete JSON line(s) detected"
+
+                                    if should_flush:
+                                        accumulated_text = ''.join(accumulation_buffer)
+                                        stdout_data.append(accumulated_text)
+                                        if VERBOSITY >= 1:
+                                            log_verbose(f"[Accumulate] Flushed {len(accumulated_text)} chars ({len(accumulation_buffer)} chunks) - {flush_reason}")
+                                        accumulation_buffer = []
+                                        buffer_total_bytes = 0
                                 else:
+                                    # No more data, flush any remaining accumulated data
+                                    if accumulation_buffer:
+                                        accumulated_text = ''.join(accumulation_buffer)
+                                        stdout_data.append(accumulated_text)
+                                        if VERBOSITY >= 1:
+                                            log_verbose(f"[Accumulate] Final flush: {len(accumulated_text)} chars ({len(accumulation_buffer)} chunks)")
+                                        accumulation_buffer = []
+                                        buffer_total_bytes = 0
                                     break
                             except OSError:
                                 break
@@ -184,12 +262,9 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                         log_debug(f"Error in select/read: {e}")
                         break
 
-                # Final waitpid to collect exit status
-                try:
-                    _, status = os.waitpid(pid, 0)
-                    exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
-                except OSError:
-                    exit_code = 1
+                    # If process has exited and we've read all available data, break
+                    if process_exited:
+                        break
 
                 # Handle stdin input if provided
                 if input_data and False:  # We handle stdin via shell redirection for now

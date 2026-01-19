@@ -162,6 +162,40 @@ class TestCallExecutorPty:
             with pytest.raises(OSError, match="PTY not supported"):
                 call_executor_pty(['echo', 'hello'])
 
+    @pytest.mark.skipif(not SUPPORTS_PTY, reason="PTY not supported on this platform")
+    def test_pty_buffer_accumulation_basic(self):
+        """Test basic buffer accumulation functionality."""
+        try:
+            stdout, stderr, exit_code = call_executor_pty(['echo', 'test accumulation'], timeout=5, accumulation_buffer_size=1024)
+            # Should work the same as before but with accumulation logic
+            assert 'test accumulation' in stdout
+            assert stderr == ''
+        except OSError as e:
+            pytest.skip(f"PTY execution not available: {e}")
+
+    @pytest.mark.skipif(not SUPPORTS_PTY, reason="PTY not supported on this platform")
+    def test_pty_buffer_accumulation_multiline(self):
+        """Test buffer accumulation with multiline output."""
+        try:
+            # Use printf to generate controlled multiline output
+            stdout, stderr, exit_code = call_executor_pty(['printf', 'line1\nline2\nline3\n'], timeout=5, accumulation_buffer_size=512)
+            assert 'line1' in stdout
+            assert 'line2' in stdout
+            assert 'line3' in stdout
+            lines = [line for line in stdout.split('\n') if line.strip()]
+            assert len(lines) >= 3
+        except OSError as e:
+            pytest.skip(f"PTY execution not available: {e}")
+
+    def test_pty_accumulation_buffer_parameter(self):
+        """Test that accumulation_buffer_size parameter is accepted."""
+        from inspect import signature
+        sig = signature(call_executor_pty)
+        assert 'accumulation_buffer_size' in sig.parameters
+        # Default should be 4096 as set in the function
+        param = sig.parameters['accumulation_buffer_size']
+        assert param.default == 4096
+
 
 class TestStreamingIntegration:
     """Integration tests for streaming functionality."""
