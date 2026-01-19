@@ -7,21 +7,21 @@ import sys
 import os
 
 # Add src to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'oneshot'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 from oneshot.providers.aider_executor import AiderExecutor
 
 def main():
     """Test AiderExecutor with a simple query."""
     print("=" * 60)
-    print("Testing AiderExecutor with: 'What is the capital of Hungary?'")
+    print("Testing AiderExecutor with: 'test prompt'")
     print("=" * 60)
 
     # Create an AiderExecutor instance
     executor = AiderExecutor(git_dir=os.getcwd())
 
     # Run the task
-    task = "What is the capital of Hungary?"
+    task = "test prompt"
     print(f"\nRunning task: {task}")
     print("-" * 60)
 

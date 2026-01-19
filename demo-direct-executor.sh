@@ -69,7 +69,7 @@ oneshot \
     --auditor-provider direct \
     --auditor-endpoint "${OLLAMA_ENDPOINT}" \
     --auditor-model "${OLLAMA_MODEL}" \
-    --logs-dir dev_notes/oneshot \
+    --session-log dev_notes/oneshot/demo_session.md \
     --keep-log \
     --max-iterations 3 \
     "${DEMO_TASK}"

@@ -147,9 +147,13 @@ class TestCallExecutor:
     """Test executor calls (mocked to avoid external dependencies)."""
 
     @patch('oneshot.oneshot._check_test_mode_blocking')
+    @patch('oneshot.oneshot.call_executor_pty')
     @patch('oneshot.oneshot.subprocess.run')
-    def test_call_claude_executor(self, mock_run, mock_check):
+    def test_call_claude_executor(self, mock_run, mock_pty, mock_check):
         """Test calling claude executor."""
+        # Force PTY to fail so we fall back to subprocess.run
+        mock_pty.side_effect = OSError("PTY not supported")
+
         mock_run.return_value = type('MockResult', (), {
             'stdout': 'Mock output',
             'stderr': '',
@@ -161,13 +165,22 @@ class TestCallExecutor:
 
         mock_run.assert_called_once()
         args, kwargs = mock_run.call_args
-        assert kwargs['input'] == "test prompt"
+        # Check that prompt is now passed as command argument, not stdin input
+        assert "test prompt" in ' '.join(args[0])
         assert 'claude' in ' '.join(args[0])
+        assert '--model' in ' '.join(args[0])
+        assert 'claude-3-5-haiku' in ' '.join(args[0])
+        # Prompt should not be passed via stdin anymore
+        assert kwargs.get('input') is None
 
     @patch('oneshot.oneshot._check_test_mode_blocking')
+    @patch('oneshot.oneshot.call_executor_pty')
     @patch('oneshot.oneshot.subprocess.run')
-    def test_call_cline_executor(self, mock_run, mock_check):
+    def test_call_cline_executor(self, mock_run, mock_pty, mock_check):
         """Test calling cline executor."""
+        # Force PTY to fail so we fall back to subprocess.run
+        mock_pty.side_effect = OSError("PTY not supported")
+
         mock_run.return_value = type('MockResult', (), {
             'stdout': 'Mock output',
             'stderr': '',
@@ -183,9 +196,13 @@ class TestCallExecutor:
         assert '--oneshot' in args[0]
 
     @patch('oneshot.oneshot._check_test_mode_blocking')
+    @patch('oneshot.oneshot.call_executor_pty')
     @patch('oneshot.oneshot.subprocess.run')
-    def test_call_executor_timeout(self, mock_run, mock_check):
+    def test_call_executor_timeout(self, mock_run, mock_pty, mock_check):
         """Test executor timeout handling."""
+        # Force PTY to fail so we fall back to subprocess.run
+        mock_pty.side_effect = OSError("PTY not supported")
+
         from subprocess import TimeoutExpired
         mock_run.side_effect = TimeoutExpired("cmd", 300)
 
@@ -193,18 +210,26 @@ class TestCallExecutor:
         assert "timed out" in result
 
     @patch('oneshot.oneshot._check_test_mode_blocking')
+    @patch('oneshot.oneshot.call_executor_pty')
     @patch('oneshot.oneshot.subprocess.run')
-    def test_call_executor_exception(self, mock_run, mock_check):
+    def test_call_executor_exception(self, mock_run, mock_pty, mock_check):
         """Test executor exception handling."""
+        # Force PTY to fail so we fall back to subprocess.run
+        mock_pty.side_effect = OSError("PTY not supported")
+
         mock_run.side_effect = Exception("Test error")
 
         result = call_executor("test prompt", "model", "claude")
         assert "ERROR: Test error" == result
 
     @patch('oneshot.oneshot._check_test_mode_blocking')
+    @patch('oneshot.oneshot.call_executor_pty')
     @patch('oneshot.oneshot.subprocess.run')
-    def test_call_executor_adaptive_timeout(self, mock_run, mock_check):
+    def test_call_executor_adaptive_timeout(self, mock_run, mock_pty, mock_check):
         """Test adaptive timeout with activity monitoring."""
+        # Force PTY to fail so we fall back to subprocess.run
+        mock_pty.side_effect = OSError("PTY not supported")
+
         from subprocess import TimeoutExpired
 
         # First call times out after initial timeout

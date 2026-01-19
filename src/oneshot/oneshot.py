@@ -593,6 +593,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
             if model:
                 cmd.extend(['--model', model])
             cmd.append('--dangerously-skip-permissions')
+            cmd.append(prompt)  # Pass prompt as command-line argument for --print mode
 
         log_debug(f"Command: {' '.join(cmd)}")
 
@@ -602,7 +603,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
                 log_debug("Attempting PTY-based streaming execution...")
                 stdout, stderr, exit_code = call_executor_pty(
                     cmd,
-                    input_data=prompt if executor != "cline" else None,
+                    input_data=None,  # Prompt is now passed as command argument for Claude
                     timeout=initial_timeout
                 )
                 log_verbose(f"{executor} call completed (PTY), output length: {len(stdout)} chars")
@@ -627,7 +628,6 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
         else:  # claude
             result = subprocess.run(
                 cmd,
-                input=prompt,
                 text=True,
                 capture_output=True,
                 timeout=initial_timeout
@@ -736,6 +736,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
         if model:
             cmd.extend(['--model', model])
         cmd.append('--dangerously-skip-permissions')
+        cmd.append(prompt)  # Pass prompt as command-line argument for --print mode
 
     log_debug(f"Starting monitored process: {' '.join(cmd)}")
 
@@ -775,7 +776,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
 
                 stdout, stderr, exit_code = call_executor_pty(
                     cmd,
-                    input_data=prompt if executor != "cline" else None,
+                    input_data=None,  # Prompt is now passed as command argument for Claude
                     timeout=max_timeout
                 )
                 output_parts.append(stdout)
@@ -806,7 +807,6 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
         else:
             result = subprocess.run(
                 cmd,
-                input=prompt,
                 text=True,
                 capture_output=True,
                 timeout=max_timeout
@@ -1276,10 +1276,21 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
 
 
 def count_iterations(log_file):
-    """Count iterations in existing session."""
+    """Count iterations in existing session. Supports both JSON and markdown formats."""
     try:
-        with open(log_file, 'r') as f:
+        session_path = Path(log_file)
+        with open(session_path, 'r') as f:
             content = f.read()
+
+        # If JSON format, count iterations from the data structure
+        if session_path.suffix == '.json' or content.strip().startswith('{'):
+            try:
+                data = json.loads(content)
+                return len(data.get('iterations', []))
+            except json.JSONDecodeError:
+                pass
+
+        # If markdown format, count iteration headers
         return len(re.findall(r'^## Iteration \d+', content, re.MULTILINE))
     except:
         return 0
