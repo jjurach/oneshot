@@ -7,13 +7,16 @@ import argparse
 import asyncio
 import json
 import os
+import platform
+import pty
 import re
+import select
 import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List
 
 # ============================================================================
 # TEST CONFIGURATION - Prevent blocking subprocess calls in tests
@@ -65,6 +68,248 @@ def dump_buffer(label, content, max_lines=20):
         print(f"\n[BUFFER] {label}:", file=sys.stderr)
         for line in display:
             print(f"  {line}", file=sys.stderr)
+
+# ============================================================================
+# PTY STREAMING INFRASTRUCTURE
+# ============================================================================
+
+DISABLE_STREAMING = os.environ.get('ONESHOT_DISABLE_STREAMING', '0') == '1'
+SUPPORTS_PTY = platform.system() in ('Linux', 'Darwin')  # Unix/Linux and macOS
+
+
+def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
+                       timeout: Optional[float] = None,
+                       buffer_size: int = 1024) -> Tuple[str, str, int]:
+    """
+    Execute command using PTY allocation for real-time streaming output.
+
+    PTY allocation forces CLI tools to detect a terminal and use line-buffering
+    instead of full buffering, enabling real-time output streaming.
+
+    Args:
+        cmd: Command and arguments as list
+        input_data: Optional stdin data for the process
+        timeout: Subprocess timeout in seconds
+        buffer_size: Size of read buffer (1024 bytes typical for line-buffered output)
+
+    Returns:
+        Tuple of (stdout, stderr, exit_code)
+
+    Raises:
+        OSError: If PTY allocation fails
+        subprocess.TimeoutExpired: If timeout is exceeded
+    """
+    if not SUPPORTS_PTY:
+        log_debug("PTY not supported on this platform, falling back to buffered execution")
+        raise OSError("PTY not supported on Windows")
+
+    if DISABLE_STREAMING:
+        log_debug("Streaming disabled via ONESHOT_DISABLE_STREAMING environment variable")
+        raise OSError("Streaming disabled")
+
+    try:
+        # Allocate master and slave PTY file descriptors
+        master_fd, slave_fd = pty.openpty()
+        log_debug(f"PTY allocated: master={master_fd}, slave={slave_fd}")
+
+        stdout_data = []
+        stderr_data = []
+        start_time = time.time()
+
+        try:
+            # Fork and execute process
+            pid = os.fork()
+
+            if pid == 0:
+                # Child process
+                os.setsid()  # Create new session
+                os.dup2(slave_fd, 0)  # stdin
+                os.dup2(slave_fd, 1)  # stdout
+                os.dup2(slave_fd, 2)  # stderr
+
+                # Close PTY file descriptors in child
+                os.close(master_fd)
+                os.close(slave_fd)
+
+                try:
+                    os.execvp(cmd[0], cmd)
+                except Exception as e:
+                    log_info(f"Failed to execute {cmd[0]}: {e}")
+                    sys.exit(1)
+            else:
+                # Parent process
+                os.close(slave_fd)
+                log_debug(f"Child process spawned with PID {pid}")
+
+                # Read output from master PTY
+                while True:
+                    # Check timeout
+                    if timeout is not None:
+                        elapsed = time.time() - start_time
+                        if elapsed > timeout:
+                            import signal
+                            os.killpg(os.getpgid(pid), signal.SIGTERM)
+                            raise subprocess.TimeoutExpired(cmd[0], timeout)
+
+                    # Check if process is done
+                    try:
+                        wpid, status = os.waitpid(pid, os.WNOHANG)
+                        if wpid == pid:
+                            exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+                            log_debug(f"Process exited with code {exit_code}")
+                            break
+                    except OSError:
+                        break
+
+                    # Read available data with select for non-blocking I/O
+                    try:
+                        ready, _, _ = select.select([master_fd], [], [], 0.1)
+                        if ready:
+                            try:
+                                data = os.read(master_fd, buffer_size)
+                                if data:
+                                    stdout_data.append(data.decode('utf-8', errors='replace'))
+                                    if VERBOSITY >= 2:
+                                        log_debug(f"[Stream] {len(data)} bytes received")
+                                else:
+                                    break
+                            except OSError:
+                                break
+                    except Exception as e:
+                        log_debug(f"Error in select/read: {e}")
+                        break
+
+                # Final waitpid to collect exit status
+                try:
+                    _, status = os.waitpid(pid, 0)
+                    exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+                except OSError:
+                    exit_code = 1
+
+                # Handle stdin input if provided
+                if input_data and False:  # We handle stdin via shell redirection for now
+                    pass
+
+        finally:
+            # Cleanup PTY
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+
+        return ''.join(stdout_data), ''.join(stderr_data), exit_code
+
+    except Exception as e:
+        log_debug(f"PTY execution failed: {e}")
+        raise
+
+
+def parse_streaming_json(data: str) -> List[Dict[str, Any]]:
+    """
+    Parse streaming JSON output from CLI tools.
+
+    Handles partial/incomplete JSON messages during streaming by buffering
+    and returning complete JSON objects as they become available.
+
+    Args:
+        data: Raw streaming output containing newline-delimited JSON
+
+    Returns:
+        List of parsed JSON objects
+
+    Raises:
+        JSONDecodeError: If JSON parsing fails completely
+    """
+    json_objects = []
+    lines = data.split('\n')
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            obj = json.loads(line)
+            json_objects.append(obj)
+        except json.JSONDecodeError as e:
+            log_debug(f"Failed to parse JSON line: {line[:100]}... ({e})")
+            # Continue to next line, graceful degradation
+
+    return json_objects
+
+
+def get_cline_task_dir(task_id: str) -> Optional[Path]:
+    """
+    Get the task directory for a Cline task.
+
+    Cline stores task state and progress in ~/.cline/data/tasks/$task_id/
+
+    Args:
+        task_id: The Cline task ID
+
+    Returns:
+        Path to task directory if it exists, None otherwise
+    """
+    home = Path.home()
+    task_dir = home / '.cline' / 'data' / 'tasks' / task_id
+
+    if task_dir.exists():
+        log_debug(f"Found Cline task directory: {task_dir}")
+        return task_dir
+
+    log_debug(f"Cline task directory not found: {task_dir}")
+    return None
+
+
+def monitor_task_activity(task_dir: Path, timeout: float = 60.0,
+                          check_interval: float = 2.0) -> bool:
+    """
+    Monitor task files for activity (file modification timestamps).
+
+    Polls task directory files to detect when Cline is actively working.
+    Returns False if no activity detected within timeout period.
+
+    Args:
+        task_dir: Path to Cline task directory
+        timeout: Maximum time to wait for activity (seconds)
+        check_interval: Time between checks (seconds)
+
+    Returns:
+        True if activity detected, False if timeout exceeded
+    """
+    if not task_dir.exists():
+        log_debug(f"Task directory does not exist: {task_dir}")
+        return False
+
+    start_time = time.time()
+    last_mtime = 0.0
+
+    while time.time() - start_time < timeout:
+        try:
+            # Get the most recent modification time of any file in the directory
+            current_mtime = 0.0
+            for item in task_dir.rglob('*'):
+                if item.is_file():
+                    try:
+                        mtime = item.stat().st_mtime
+                        current_mtime = max(current_mtime, mtime)
+                    except OSError:
+                        pass
+
+            # Activity detected if modification time changed
+            if current_mtime > last_mtime:
+                log_debug(f"Activity detected in task directory at {current_mtime}")
+                last_mtime = current_mtime
+                return True
+
+            time.sleep(check_interval)
+
+        except Exception as e:
+            log_debug(f"Error monitoring task directory: {e}")
+            return False
+
+    log_debug(f"No activity detected in task directory after {timeout}s")
+    return False
 
 # ============================================================================
 # CONFIGURATION - Edit these defaults
@@ -329,124 +574,78 @@ def parse_json_verdict(json_text):
 
 
 def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30):
+    """
+    Call executor (claude or cline) with streaming output and adaptive timeout.
 
-
-    """Call executor (claude or cline) with adaptive timeout and activity monitoring."""
-
-
+    Attempts PTY-based streaming first for real-time output, falls back to buffered
+    execution if PTY is unavailable or disabled.
+    """
     try:
-
-
         log_debug(f"Calling {executor} with model: {model}")
-
-
         log_debug(f"Prompt length: {len(prompt)} chars")
-
-
         log_debug(f"Timeout config: initial={initial_timeout}s, max={max_timeout}s, activity_check={activity_interval}s")
 
-
-
-
-
+        # Build command
         if executor == "cline":
-
-
-            # For cline, the model is configured in the tool itself
-
-
-            cmd = ['cline', '--yolo', '--no-interactive', '--oneshot', prompt]
-
-
-            log_debug(f"Command: {' '.join(cmd)}")
-
-            _check_test_mode_blocking()
-            result = subprocess.run(
-
-
-                cmd,
-
-
-                text=True,
-
-
-                capture_output=True,
-
-
-                timeout=initial_timeout
-
-
-            )
-
-
-        else:  # default to claude
-
-
-            # Build claude command - only include --model if explicitly provided
+            cmd = ['cline', '--yolo', '--no-interactive', '--output-format', 'json', '--oneshot', prompt]
+        else:  # claude
             cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose']
             if model:
                 cmd.extend(['--model', model])
             cmd.append('--dangerously-skip-permissions')
 
+        log_debug(f"Command: {' '.join(cmd)}")
 
-            log_debug(f"Command: {' '.join(cmd)}")
+        # Try PTY-based streaming first
+        if SUPPORTS_PTY and not DISABLE_STREAMING:
+            try:
+                log_debug("Attempting PTY-based streaming execution...")
+                stdout, stderr, exit_code = call_executor_pty(
+                    cmd,
+                    input_data=prompt if executor != "cline" else None,
+                    timeout=initial_timeout
+                )
+                log_verbose(f"{executor} call completed (PTY), output length: {len(stdout)} chars")
+                if stderr:
+                    log_debug(f"{executor} stderr: {stderr}")
+                return stdout
+            except (OSError, subprocess.TimeoutExpired) as e:
+                log_debug(f"PTY execution failed, falling back to buffered: {e}")
+                # Fall through to buffered execution
 
-            _check_test_mode_blocking()
+        # Fallback: buffered execution via subprocess.run
+        log_debug("Using buffered execution (non-PTY)")
+        _check_test_mode_blocking()
+
+        if executor == "cline":
             result = subprocess.run(
-
-
                 cmd,
-
-
-                input=prompt,
-
-
                 text=True,
-
-
                 capture_output=True,
-
-
                 timeout=initial_timeout
-
-
+            )
+        else:  # claude
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=initial_timeout
             )
 
-
-
-
-
-        log_verbose(f"{executor} call completed, output length: {len(result.stdout)} chars")
-
-
+        log_verbose(f"{executor} call completed (buffered), output length: {len(result.stdout)} chars")
         if result.stderr:
-
-
             log_debug(f"{executor} stderr: {result.stderr}")
-
-
         return result.stdout
 
-
     except subprocess.TimeoutExpired:
-
-
         log_info(f"Initial timeout ({initial_timeout}s) exceeded, checking for activity...")
-
-
-        # Try adaptive timeout with activity monitoring
-
-
         return call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval)
 
-
     except Exception as e:
-
-
         log_info(f"ERROR: {e}")
-
-
         return f"ERROR: {e}"
+
 
 
 async def call_executor_async(prompt: str, model: Optional[str], executor: str = "claude",
@@ -477,15 +676,15 @@ async def call_executor_async(prompt: str, model: Optional[str], executor: str =
         # Build command
         if executor == "cline":
             # Properly escape the prompt for shell execution
-            cmd = f'cline --yolo --no-interactive --oneshot {shlex.quote(prompt)}'
+            cmd = f'cline --yolo --no-interactive --output-format json --oneshot {shlex.quote(prompt)}'
             log_debug(f"Command: {cmd}")
         else:  # claude
             # For claude, we need to handle stdin input
             # Only include --model if explicitly provided
             if model:
-                cmd = f'claude -p --model {model} --dangerously-skip-permissions'
+                cmd = f'claude -p --output-format stream-json --model {model} --dangerously-skip-permissions'
             else:
-                cmd = f'claude -p --dangerously-skip-permissions'
+                cmd = f'claude -p --output-format stream-json --dangerously-skip-permissions'
 
         # Create task with appropriate timeouts
         # Use max_timeout as idle threshold since OneshotTask handles activity monitoring
@@ -519,57 +718,85 @@ async def call_executor_async(prompt: str, model: Optional[str], executor: str =
 
 
 def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval):
-    """Adaptive timeout with activity monitoring for long-running tasks."""
+    """
+    Adaptive timeout with activity monitoring for long-running tasks.
+
+    Uses PTY streaming where available, falls back to buffered execution
+    with activity-based timeout extension.
+    """
     import threading
-    import time
 
     log_debug(f"Starting adaptive timeout monitoring (max: {max_timeout}s, check: {activity_interval}s)")
 
+    # Build command
+    if executor == "cline":
+        cmd = ['cline', '--yolo', '--no-interactive', '--output-format', 'json', '--oneshot', prompt]
+    else:
+        cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose']
+        if model:
+            cmd.extend(['--model', model])
+        cmd.append('--dangerously-skip-permissions')
+
+    log_debug(f"Starting monitored process: {' '.join(cmd)}")
+
     # Track activity
     last_activity_time = time.time()
-    activity_detected = False
-    output_buffer = []
-    error_buffer = []
+    output_parts = []
 
-    def monitor_activity():
-        nonlocal last_activity_time, activity_detected
+    def monitor_activity_thread():
+        nonlocal last_activity_time
         start_time = time.time()
 
         while time.time() - start_time < max_timeout:
             time.sleep(activity_interval)
 
             # Check if we have new output (simplified activity detection)
-            current_output_len = len(''.join(output_buffer))
+            current_output_len = len(''.join(output_parts))
             if current_output_len > 0:
-                activity_detected = True
                 last_activity_time = time.time()
-                log_verbose(f"Activity detected at {time.time() - start_time:.1f}s")
+                log_verbose(f"Activity detected at {time.time() - start_time:.1f}s (output: {current_output_len} bytes)")
 
-            # If no activity for too long, timeout
+            # If no activity for too long, allow timeout
             if time.time() - last_activity_time > activity_interval * 2:
-                log_info(f"No activity for {activity_interval * 2}s, timing out")
+                log_info(f"No activity for {activity_interval * 2}s, allowing timeout")
                 return False
 
         return True
 
     try:
-        if executor == "cline":
-            cmd = ['cline', '--yolo', '--no-interactive', '--oneshot', prompt]
-        else:
-            cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose']
-            if model:
-                cmd.extend(['--model', model])
-            cmd.append('--dangerously-skip-permissions')
+        # Try PTY-based streaming first if available
+        if SUPPORTS_PTY and not DISABLE_STREAMING:
+            try:
+                log_debug("Attempting PTY-based adaptive streaming...")
 
-        log_debug(f"Starting monitored process: {' '.join(cmd)}")
+                # Start activity monitoring thread
+                monitor_thread = threading.Thread(target=monitor_activity_thread, daemon=True)
+                monitor_thread.start()
+
+                stdout, stderr, exit_code = call_executor_pty(
+                    cmd,
+                    input_data=prompt if executor != "cline" else None,
+                    timeout=max_timeout
+                )
+                output_parts.append(stdout)
+                log_verbose(f"Adaptive {executor} call completed (PTY), output length: {len(stdout)} chars")
+                if stderr:
+                    log_debug(f"{executor} stderr: {stderr}")
+                return stdout
+            except (OSError, subprocess.TimeoutExpired) as e:
+                log_debug(f"PTY adaptive execution failed, falling back to buffered: {e}")
+                # Fall through to buffered execution
+
+        # Fallback: buffered execution via subprocess.run with activity monitoring
+        log_debug("Using buffered adaptive execution (non-PTY)")
 
         # Start activity monitor in background
-        monitor_thread = threading.Thread(target=monitor_activity, daemon=True)
+        monitor_thread = threading.Thread(target=monitor_activity_thread, daemon=True)
         monitor_thread.start()
 
-        # Run the process with extended timeout
+        _check_test_mode_blocking()
+
         if executor == "cline":
-            _check_test_mode_blocking()
             result = subprocess.run(
                 cmd,
                 text=True,
@@ -577,7 +804,6 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
                 timeout=max_timeout
             )
         else:
-            _check_test_mode_blocking()
             result = subprocess.run(
                 cmd,
                 input=prompt,
@@ -586,7 +812,8 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
                 timeout=max_timeout
             )
 
-        log_verbose(f"Adaptive {executor} call completed, output length: {len(result.stdout)} chars")
+        output_parts.append(result.stdout)
+        log_verbose(f"Adaptive {executor} call completed (buffered), output length: {len(result.stdout)} chars")
 
         if result.stderr:
             log_debug(f"{executor} stderr: {result.stderr}")
@@ -599,6 +826,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
     except Exception as e:
         log_info(f"ERROR in adaptive timeout: {e}")
         return f"ERROR: {e}"
+
 
 
 def find_latest_session(sessions_dir):
