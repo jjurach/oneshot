@@ -24,6 +24,7 @@ class EventType(Enum):
     TASK_FAILED = "task_failed"
     SYSTEM_STATUS = "system_status"
     UI_COMMAND = "ui_command"
+    EXECUTOR_ACTIVITY = "executor_activity"
 
 
 @dataclass
@@ -80,6 +81,21 @@ class UICommandPayload(EventPayload):
     command: str
     target_task_id: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        if not self.timestamp:
+            self.timestamp = datetime.now().isoformat()
+
+
+@dataclass
+class ExecutorActivityPayload(EventPayload):
+    """Event payload for executor activity (Claude, cline, aider, etc.)."""
+    activity_type: str  # e.g., "tool_call", "planning", "file_operation"
+    description: str
+    executor: str = "unknown"  # Which executor this came from
+    task_id: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+    is_sensitive: bool = False  # Whether this event contains sensitive info
 
     def __post_init__(self):
         if not self.timestamp:
@@ -321,5 +337,33 @@ async def emit_system_status(total_tasks: int, running_tasks: int, completed_tas
         failed_tasks=failed_tasks,
         interrupted_tasks=interrupted_tasks,
         max_concurrent=max_concurrent
+    )
+    await event_emitter.emit(event)
+
+
+async def emit_executor_activity(activity_type: str, description: str, executor: str = "unknown",
+                                task_id: Optional[str] = None, details: Optional[Dict[str, Any]] = None,
+                                is_sensitive: bool = False):
+    """
+    Convenience function to emit executor activity events.
+
+    Args:
+        activity_type: Type of activity (tool_call, planning, file_operation, etc.)
+        description: Human-readable description of the activity
+        executor: Which executor this came from (claude, cline, aider, etc.)
+        task_id: Associated task ID if applicable
+        details: Additional structured details about the activity
+        is_sensitive: Whether this event contains sensitive information
+    """
+    event = ExecutorActivityPayload(
+        event_type=EventType.EXECUTOR_ACTIVITY,
+        timestamp=datetime.now().isoformat(),
+        data={},
+        activity_type=activity_type,
+        description=description,
+        executor=executor,
+        task_id=task_id,
+        details=details or {},
+        is_sensitive=is_sensitive
     )
     await event_emitter.emit(event)

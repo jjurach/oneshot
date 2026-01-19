@@ -21,7 +21,7 @@ def main():
     executor = AiderExecutor(git_dir=os.getcwd())
 
     # Run the task
-    task = "test prompt"
+    task = "What is the capital of Hungary?"
     print(f"\nRunning task: {task}")
     print("-" * 60)
 
