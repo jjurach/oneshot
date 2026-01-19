@@ -382,7 +382,11 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
         else:  # default to claude
 
 
-            cmd = ['claude', '-p', '--model', model, '--dangerously-skip-permissions']
+            # Build claude command - only include --model if explicitly provided
+            cmd = ['claude', '-p']
+            if model:
+                cmd.extend(['--model', model])
+            cmd.append('--dangerously-skip-permissions')
 
 
             log_debug(f"Command: {' '.join(cmd)}")
@@ -477,7 +481,11 @@ async def call_executor_async(prompt: str, model: Optional[str], executor: str =
             log_debug(f"Command: {cmd}")
         else:  # claude
             # For claude, we need to handle stdin input
-            cmd = f'claude -p --model {model} --dangerously-skip-permissions'
+            # Only include --model if explicitly provided
+            if model:
+                cmd = f'claude -p --model {model} --dangerously-skip-permissions'
+            else:
+                cmd = f'claude -p --dangerously-skip-permissions'
 
         # Create task with appropriate timeouts
         # Use max_timeout as idle threshold since OneshotTask handles activity monitoring
