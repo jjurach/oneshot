@@ -1,0 +1,114 @@
+{
+  "test_name": "Streaming JSON Investigation - Capital of Australia",
+  "test_date": "2026-01-19T15:12:38.314433",
+  "query": "What is the capital of Australia?",
+  "executors_tested": [
+    "claude",
+    "cline",
+    "aider",
+    "gemini"
+  ],
+  "results": [
+    {
+      "executor": "claude",
+      "query": "What is the capital of Australia?",
+      "timestamp": "2026-01-19T15:12:38.314450",
+      "status": "timeout",
+      "output_events": [],
+      "errors": [
+        "Executor timed out after 30s"
+      ],
+      "metadata": {}
+    },
+    {
+      "executor": "cline",
+      "query": "What is the capital of Australia?",
+      "timestamp": "2026-01-19T15:13:08.336395",
+      "status": "completed",
+      "output_events": [
+        {
+          "line_number": 0,
+          "raw_text": "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
+          "is_valid_json": false
+        },
+        {
+          "line_number": 1,
+          "raw_text": "\u2502                                                          \u2502",
+          "is_valid_json": false
+        },
+        {
+          "line_number": 2,
+          "raw_text": "\u2502    cline cli preview v1.0.9                 plan mode    \u2502",
+          "is_valid_json": false
+        },
+        {
+          "line_number": 3,
+          "raw_text": "\u2502    cline/x-ai/grok-code-fast-1                           \u2502",
+          "is_valid_json": false
+        },
+        {
+          "line_number": 4,
+          "raw_text": "\u2502    ~/AiSpace/oneshot                                     \u2502",
+          "is_valid_json": false
+        },
+        {
+          "line_number": 5,
+          "raw_text": "\u2502                                                          \u2502",
+          "is_valid_json": false
+        },
+        {
+          "line_number": 6,
+          "raw_text": "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+          "is_valid_json": false
+        }
+      ],
+      "errors": [
+        "Error: huh: could not open a new TTY: open /dev/tty: no such device or address",
+        "Usage:",
+        "  cline [prompt] [flags]",
+        "  cline [command]",
+        ""
+      ],
+      "metadata": {
+        "total_events": 7,
+        "json_events": 0,
+        "text_events": 7
+      }
+    },
+    {
+      "executor": "aider",
+      "query": "What is the capital of Australia?",
+      "timestamp": "2026-01-19T15:13:12.454543",
+      "status": "timeout",
+      "output_events": [],
+      "errors": [
+        "Executor timed out after 30s"
+      ],
+      "metadata": {}
+    },
+    {
+      "executor": "gemini",
+      "query": "What is the capital of Australia?",
+      "timestamp": "2026-01-19T15:13:42.495676",
+      "status": "completed",
+      "output_events": [
+        {
+          "line_number": 0,
+          "raw_text": "The capital of Australia is Canberra.",
+          "is_valid_json": false
+        }
+      ],
+      "errors": [
+        "YOLO mode is enabled. All tool calls will be automatically approved.",
+        "Loaded cached credentials.",
+        "Server 'context7' supports tool updates. Listening for changes...",
+        "The --prompt (-p) flag has been deprecated and will be removed in a future version. Please use a positional argument for your prompt. See gemini --help for more information."
+      ],
+      "metadata": {
+        "total_events": 1,
+        "json_events": 0,
+        "text_events": 1
+      }
+    }
+  ]
+}
