@@ -177,3 +177,6 @@ dev_notes/oneshot/
 tmp/
 tmp-*
 .aider*
+
+# External tool repositories
+external/
