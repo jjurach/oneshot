@@ -701,8 +701,15 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
         # Get filtered output (without cost/token metadata)
         filtered_output = interpreter.get_filtered_output(raw_output)
 
-        # If we have meaningful activities, format them for display instead of raw JSON
-        if activities:
+        # Only apply activity formatting when activity_logger is being used (not for tests)
+        # and when we have meaningful activities (not just auto-generated STATUS events)
+        has_meaningful_activities = (
+            activities and
+            activity_logger is not None and
+            not all(a.activity_type.value == 'status' for a in activities)
+        )
+
+        if has_meaningful_activities:
             # Create a summary of activities for the user
             activity_lines = []
 
@@ -768,7 +775,7 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
 
             return formatted_output, activities
         else:
-            # No activities found, return filtered output
+            # No meaningful activities or no logger, return filtered output
             return filtered_output, activities
 
     except Exception as e:
