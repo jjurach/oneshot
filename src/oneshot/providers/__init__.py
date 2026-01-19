@@ -37,6 +37,8 @@ class ProviderConfig:
     endpoint: Optional[str] = None  # For direct provider
     api_key: Optional[str] = None  # Optional for local models
     timeout: int = 300
+    output_format: Optional[str] = None  # "json" or "stream-json"
+    approval_mode: Optional[str] = None  # "normal" or "yolo"
 
     def __post_init__(self):
         """Validate configuration."""
@@ -153,8 +155,12 @@ class ExecutorProvider(Provider):
         from oneshot.oneshot import log_debug
 
         try:
-            # Use GeminiCLIExecutor from this package
-            executor = GeminiCLIExecutor()
+            # Use GeminiCLIExecutor from this package with config options
+            executor = GeminiCLIExecutor(
+                working_dir=None,  # Use default working directory
+                output_format=self.config.output_format,
+                approval_mode=self.config.approval_mode
+            )
             result = executor.run_task(prompt)
 
             if result.success:

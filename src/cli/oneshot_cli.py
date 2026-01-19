@@ -127,8 +127,20 @@ Configuration:
     parser.add_argument(
         '--executor',
         default=config['executor'],
-        choices=['claude', 'cline', 'aider'],
-        help=f'Which executor to use: claude, cline, or aider (default: {config["executor"]})'
+        choices=['claude', 'cline', 'aider', 'gemini'],
+        help=f'Which executor to use: claude, cline, aider, or gemini (default: {config["executor"]})'
+    )
+
+    parser.add_argument(
+        '--output-format',
+        choices=['json', 'stream-json'],
+        help='Output format: json (structured) or stream-json (streaming)'
+    )
+
+    parser.add_argument(
+        '--approval-mode',
+        choices=['normal', 'yolo'],
+        help='Approval mode: normal (requires approval) or yolo (auto-approve)'
     )
 
     parser.add_argument(
@@ -306,7 +318,9 @@ Configuration:
                 provider_type='executor',
                 executor=executor,
                 model=model,
-                timeout=args.initial_timeout
+                timeout=args.initial_timeout,
+                output_format=args.output_format,
+                approval_mode=args.approval_mode
             )
 
         # Build auditor provider config
