@@ -32,7 +32,7 @@ class TestRunOneshot:
             )
             assert success is True
 
-    @patch('oneshot.providers.call_executor')
+    @patch('oneshot.oneshot.call_executor')
     @patch('oneshot.oneshot.count_iterations')
     @patch('builtins.print')
     def test_run_oneshot_max_iterations_reached(self, mock_print, mock_count, mock_call):

@@ -498,6 +498,47 @@ The system will accept both valid JSON and responses with clear completion indic
 # Backward compatibility: default AUDITOR_PROMPT constant
 AUDITOR_PROMPT = get_auditor_prompt()
 
+def get_reworker_prompt(header: str = "oneshot reworker") -> str:
+    """
+    Generate the reworker prompt with a customizable header.
+
+    Args:
+        header: Custom header to prepend to the prompt
+
+    Returns:
+        Complete reworker prompt string
+    """
+    return f"""{header}
+
+CRITICAL: You MUST ONLY consider the original prompt and the auditor feedback provided below.
+Do NOT wander in random directions or introduce new ideas not mentioned in either the original prompt or the auditor feedback.
+
+Re-run your tests to verify completion. If you think the requested change is complete and successful, then be very careful to output this expected JSON and nothing else.
+
+PREFERRED FORMAT (valid JSON):
+{{
+  "status": "DONE",
+  "result": "<your answer/output here>",
+  "confidence": "<high/medium/low>",
+  "validation": "<how you verified this answer - sources, output shown, reasoning explained>",
+  "execution_proof": "<what you actually did - optional if no external tools were used>"
+}}
+
+IMPORTANT GUIDANCE:
+- "result" should be your final answer
+- "validation" should describe HOW you got it (tools used, sources checked, actual output if execution)
+- "execution_proof" is optional - only include if you used external tools, commands, or computations
+- For knowledge-based answers: brief validation is sufficient
+- For coding tasks: describe the changes made
+- Be honest and specific - don't make up results
+- Set "status" to "DONE" or use completion words when you believe the task is completed
+
+Complete this task:
+"""
+
+# Backward compatibility: default REWORKER_PROMPT constant
+REWORKER_PROMPT = get_reworker_prompt()
+
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
@@ -570,6 +611,58 @@ def contains_completion_indicators(text):
         return True
 
     return False
+
+
+def truncate_worker_output_for_auditor(output: str, max_bytes: int = 2048) -> str:
+    """
+    Truncate worker output for inclusion in auditor prompts.
+
+    Logic:
+    - If output contains valid JSON that appears to be a completion message, return the entire JSON object
+    - Otherwise, return the last N bytes (2048 default) of output
+    - Ensure proper character boundaries (don't split multi-byte UTF-8 characters)
+
+    Args:
+        output: The worker output to truncate
+        max_bytes: Maximum bytes to return (default 2048)
+
+    Returns:
+        Truncated output string
+    """
+    if not output:
+        return ""
+
+    # First, check if the output contains valid JSON that looks like a completion message
+    try:
+        # Try to extract JSON from the output
+        extracted_json = extract_json(output)
+        if extracted_json:
+            # Check if the extracted JSON contains completion indicators
+            if contains_completion_indicators(extracted_json):
+                # Return the complete JSON object if it appears to be a completion message
+                return extracted_json
+    except Exception:
+        pass
+
+    # If no valid completion JSON found, return the last N bytes
+    output_bytes = output.encode('utf-8', errors='replace')
+
+    if len(output_bytes) <= max_bytes:
+        return output
+
+    # Take the last max_bytes, but ensure we don't split multi-byte UTF-8 characters
+    truncated_bytes = output_bytes[-max_bytes:]
+
+    # Find a safe UTF-8 boundary by looking for the start of a valid UTF-8 sequence
+    # Walk backwards until we find a byte that could be the start of a UTF-8 character
+    for i in range(len(truncated_bytes) - 1, -1, -1):
+        byte = truncated_bytes[i]
+        # Check if this byte is the start of a UTF-8 sequence (0xxxxxxx or 11xxxxxx)
+        if (byte & 0x80) == 0 or (byte & 0xC0) == 0xC0:
+            truncated_bytes = truncated_bytes[i:]
+            break
+
+    return truncated_bytes.decode('utf-8', errors='replace')
 
 
 def extract_lenient_json(text):
@@ -1131,7 +1224,7 @@ def strip_ansi(text):
 # ============================================================================
 
 
-def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30, worker_prompt_header="oneshot execution", auditor_prompt_header="oneshot auditor"):
+def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resume=False, session_file=None, session_log=None, keep_log=False, initial_timeout=300, max_timeout=3600, activity_interval=30, worker_prompt_header="oneshot execution", auditor_prompt_header="oneshot auditor", reworker_prompt_header="oneshot reworker"):
     """Run the oneshot task with worker and auditor loop using provider objects."""
     from .providers import Provider
     from .providers.activity_logger import ActivityLogger
@@ -1229,6 +1322,9 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
     activity_logger = ActivityLogger(session_file_base)
     log_debug(f"Created activity logger for session: {session_file_base}")
 
+    # Track auditor feedback for reworker prompts
+    last_auditor_feedback = None
+
     try:
         while iteration <= max_iterations:
             print(f"\n--- 🤖 Worker: Iteration {iteration} ---")
@@ -1236,7 +1332,19 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
 
             # 1. Execute the Worker
             log_verbose(f"Building worker prompt (header + task)")
-            full_prompt = get_worker_prompt(worker_prompt_header) + "\n\n" + prompt
+
+            # Determine if this is a rework iteration (iteration > 1 and we have auditor feedback)
+            is_rework_iteration = iteration > 1 and last_auditor_feedback is not None
+
+            if is_rework_iteration:
+                # Use reworker prompt for iterations 2+
+                full_prompt = get_reworker_prompt(worker_prompt_header) + "\n\n" + prompt + "\n\n" + last_auditor_feedback
+                log_verbose("Using reworker prompt for iteration > 1")
+            else:
+                # Use worker prompt for initial iteration
+                full_prompt = get_worker_prompt(worker_prompt_header) + "\n\n" + prompt
+                log_verbose("Using worker prompt for initial iteration")
+
             log_debug(f"Full prompt length: {len(full_prompt)} chars")
             dump_buffer("Worker Prompt", full_prompt, max_lines=10)
 
@@ -1293,10 +1401,14 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
 
             # Real Auditor Call
             log_verbose(f"Preparing auditor prompt (extraction method: {extraction_method})")
+
+            # Truncate worker output for auditor prompt (final 2KB or complete JSON if present)
+            truncated_worker_output = truncate_worker_output_for_auditor(worker_output)
+
             if extraction_method == "strict":
-                audit_input = f"Original Task: {prompt}\n\nEvaluate this valid JSON response:\n\n{worker_json}"
+                audit_input = f"Original Task: {prompt}\n\nEvaluate this valid JSON response:\n\n{truncated_worker_output}"
             else:
-                audit_input = f"Original Task: {prompt}\n\nEvaluate this response (parsed with {extraction_method} method):\n\n{worker_output}\n\nParsed as: {worker_json}"
+                audit_input = f"Original Task: {prompt}\n\nEvaluate this response (parsed with {extraction_method} method):\n\n{truncated_worker_output}\n\nParsed as: {worker_json}"
             full_auditor_prompt = get_auditor_prompt(auditor_prompt_header) + "\n\n" + audit_input
             log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
 
@@ -1372,6 +1484,8 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
                 print("🔄 Auditor suggested: REITERATE")
                 if reason:
                     print(f"Issue: {reason}")
+                    # Store auditor feedback for reworker prompt
+                    last_auditor_feedback = f"Auditor Feedback: {reason}"
                     prompt = f"{prompt}\n\n[Iteration {iteration} feedback: {reason}]"
 
             else:
@@ -1612,7 +1726,8 @@ def count_iterations(log_file):
 def run_oneshot_legacy(prompt, worker_model, auditor_model, max_iterations, executor="claude",
                        resume=False, session_file=None, session_log=None, keep_log=False,
                        initial_timeout=300, max_timeout=3600, activity_interval=30,
-                       worker_prompt_header="oneshot execution", auditor_prompt_header="oneshot auditor"):
+                       worker_prompt_header="oneshot execution", auditor_prompt_header="oneshot auditor",
+                       reworker_prompt_header="oneshot reworker"):
     """
     Backward-compatible wrapper that accepts model strings and creates providers.
 
@@ -1770,6 +1885,12 @@ Configuration:
         '--auditor-prompt-header',
         default=config['auditor_prompt_header'],
         help=f'Custom header for auditor prompts (default: "{config["auditor_prompt_header"]}")'
+    )
+
+    parser.add_argument(
+        '--reworker-prompt-header',
+        default='oneshot reworker',
+        help='Custom header for reworker prompts (default: "oneshot reworker")'
     )
 
     parser.add_argument(
@@ -1937,7 +2058,8 @@ Configuration:
         max_timeout=args.max_timeout,
         activity_interval=args.activity_interval,
         worker_prompt_header=args.worker_prompt_header,
-        auditor_prompt_header=args.auditor_prompt_header
+        auditor_prompt_header=args.auditor_prompt_header,
+        reworker_prompt_header=args.reworker_prompt_header
     )
 
     sys.exit(0 if success else 1)
