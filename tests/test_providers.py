@@ -164,7 +164,8 @@ class TestExecutorProvider:
             executor="claude",
             initial_timeout=300,
             max_timeout=3600,
-            activity_interval=30
+            activity_interval=30,
+            activity_logger=None
         )
 
     @pytest.mark.asyncio
@@ -190,7 +191,8 @@ class TestExecutorProvider:
             executor="claude",
             initial_timeout=300,
             max_timeout=3600,
-            activity_interval=30
+            activity_interval=30,
+            activity_logger=None
         )
 
 
