@@ -32,10 +32,15 @@ class AiderExecutor(BaseExecutor):
             ExecutionResult: Detailed result of the task execution
         """
         try:
-            # Construct Aider command with specified flags
+            # Construct Aider command with preferred CLI parameters
+            # Note: --ollama-base-url is not a valid aider parameter, using env var instead
             cmd = [
                 "aider",
                 "--message", task,
+                "--model", "ollama_chat/llama-pro",
+                "--editor-model", "ollama_chat/llama-pro",
+                "--architect",
+                "--edit-format", "whole",
                 "--yes-always",
                 "--no-stream",
                 "--exit"
