@@ -378,35 +378,35 @@ def test_run_oneshot_max_iterations_reached(self, mock_print, mock_sleep, mock_c
   "result": "work done"
 }'''
 
-        auditor_response = '''Audit output
+    auditor_response = '''Audit output
 {
   "verdict": "REITERATE",
   "reason": "Try again"
 }'''
 
-        # Provide responses for 3 iterations: 3 workers + 3 auditors
-        mock_call.side_effect = [
-            worker_response, auditor_response,  # iteration 1
-            worker_response, auditor_response,  # iteration 2
-            worker_response, auditor_response,  # iteration 3
-        ]
+    # Provide responses for 3 iterations: 3 workers + 3 auditors
+    mock_call.side_effect = [
+        worker_response, auditor_response,  # iteration 1
+        worker_response, auditor_response,  # iteration 2
+        worker_response, auditor_response,  # iteration 3
+    ]
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Override SESSION_DIR for this test
-            with patch('oneshot.oneshot.SESSION_DIR', Path(tmpdir)):
-                success = run_oneshot_legacy(
-                    prompt="Test task",
-                    worker_model="test-worker",
-                    auditor_model="test-auditor",
-                    max_iterations=3
-                )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Override SESSION_DIR for this test
+        with patch('oneshot.oneshot.SESSION_DIR', Path(tmpdir)):
+            success = run_oneshot_legacy(
+                prompt="Test task",
+                worker_model="test-worker",
+                auditor_model="test-auditor",
+                max_iterations=3
+            )
 
-                assert success is False
-                assert mock_call.call_count == 6  # 3 workers + 3 auditors
+            assert success is False
+            assert mock_call.call_count == 6  # 3 workers + 3 auditors
 
-                # Check that the log file was NOT deleted (check for new format)
-                log_files = list(Path(tmpdir).glob("*oneshot*.json"))
-                assert len(log_files) == 1
+            # Check that the log file was NOT deleted (check for new format)
+            log_files = list(Path(tmpdir).glob("*oneshot*.json"))
+            assert len(log_files) == 1
 
 
 class TestStateMachine:
