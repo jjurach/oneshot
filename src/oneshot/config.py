@@ -122,11 +122,8 @@ def apply_executor_defaults(config: Dict[str, Any]) -> Dict[str, Any]:
     config = config.copy()
 
     if config["executor"] == "claude":
-        # Set Claude-specific defaults
-        if config["worker_model"] is None:
-            config["worker_model"] = "claude-3-5-haiku-20241022"
-        if config["auditor_model"] is None:
-            config["auditor_model"] = "claude-3-5-haiku-20241022"
+        # Claude uses its own default model selection - don't force a model
+        pass
     elif config["executor"] == "cline":
         # Cline doesn't support model selection
         if config["worker_model"] is not None:

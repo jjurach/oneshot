@@ -48,13 +48,8 @@ class ProviderConfig:
                 raise ValueError("executor provider requires 'executor' field (claude, cline, or aider)")
             if self.executor not in ["claude", "cline", "aider"]:
                 raise ValueError(f"executor must be 'claude', 'cline', or 'aider', got: {self.executor}")
-            # For claude executor, model is required
-            if self.executor == "claude" and not self.model:
-                raise ValueError("claude executor requires 'model' field")
-            # For aider executor, model is optional (aider has built-in default)
-            if self.executor == "aider" and self.model:
-                # Warn if model is provided, but don't error
-                pass
+            # Claude and aider executors use their own default model selection
+            # Model is optional - if not provided, executor will use its defaults
 
         elif self.provider_type == "direct":
             if not self.endpoint:
