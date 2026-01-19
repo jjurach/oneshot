@@ -45,7 +45,7 @@ def _check_test_mode_blocking():
 # LOGGING CONFIGURATION
 # ============================================================================
 
-VERBOSITY = 2  # 0=default, 1=verbose, 2=debug (set to 2 for debugging)
+VERBOSITY = 0  # 0=default, 1=verbose, 2=debug (reduced from 2 for cleaner output)
 
 def log_info(msg):
     """Default informational message to stderr."""
@@ -195,14 +195,9 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                                     accumulation_buffer.append(chunk_text)
                                     buffer_total_bytes += len(chunk_text)
 
-                                    # Enhanced logging with more details
+                                    # Minimal logging for streaming chunks (only in debug mode)
                                     if VERBOSITY >= 2:
-                                        log_debug(f"[Chunk #{chunk_count}] {len(data)} bytes received, buffer now {buffer_total_bytes} chars")
-                                        # Show preview of chunk content (first 50 chars)
-                                        preview = chunk_text.replace('\n', '\\n').replace('\r', '\\r')[:50]
-                                        log_debug(f"[Chunk Content] {preview}{'...' if len(chunk_text) > 50 else ''}")
-                                    elif VERBOSITY >= 1:
-                                        log_verbose(f"[Stream] Chunk #{chunk_count}: {len(data)} bytes, total buffered: {buffer_total_bytes}")
+                                        log_debug(f"[Chunk #{chunk_count}] {len(data)} bytes received")
 
                                     # Check if we should flush the accumulation buffer
                                     should_flush = False
@@ -242,8 +237,7 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                                     if should_flush:
                                         accumulated_text = ''.join(accumulation_buffer)
                                         stdout_data.append(accumulated_text)
-                                        if VERBOSITY >= 1:
-                                            log_verbose(f"[Accumulate] Flushed {len(accumulated_text)} chars ({len(accumulation_buffer)} chunks) - {flush_reason}")
+                                        # Remove verbose accumulation logging that was causing noise
                                         accumulation_buffer = []
                                         buffer_total_bytes = 0
                                 else:
@@ -683,13 +677,14 @@ def parse_json_verdict(json_text):
 
 def _process_executor_output(raw_output: str, executor_name: str = "executor", task_id: Optional[str] = None, activity_logger=None) -> Tuple[str, List[Any]]:
     """
-    Process executor output through activity interpreter.
+    Process executor output through activity interpreter and format for display.
 
     Returns:
-        Tuple of (filtered_output, activity_events)
+        Tuple of (formatted_output, activity_events)
     """
     try:
         interpreter = get_interpreter()
+        formatter = ActivityFormatter(use_colors=False, use_icons=True)  # No colors for output
 
         # Extract activities from raw output, passing logger for NDJSON logging
         activities = interpreter.interpret_activity(raw_output, activity_logger)
@@ -706,7 +701,76 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
         # Get filtered output (without cost/token metadata)
         filtered_output = interpreter.get_filtered_output(raw_output)
 
-        return filtered_output, activities
+        # If we have meaningful activities, format them for display instead of raw JSON
+        if activities:
+            # Create a summary of activities for the user
+            activity_lines = []
+
+            # Group activities by type
+            activity_counts = {}
+            for activity in activities:
+                activity_type = activity.activity_type.value
+                activity_counts[activity_type] = activity_counts.get(activity_type, 0) + 1
+
+            # Add activity summary header
+            activity_lines.append(f"🤖 AI Activity Summary ({len(activities)} events):")
+
+            # Add activity type counts with icons
+            for activity_type, count in activity_counts.items():
+                activity_icon = {
+                    'tool_call': '🔧',
+                    'planning': '📋',
+                    'reasoning': '🧠',
+                    'file_operation': '📄',
+                    'code_execution': '⚙️',
+                    'api_call': '🔌',
+                    'thinking': '💭',
+                    'response': '✅',
+                    'error': '❌',
+                    'status': 'ℹ️'
+                }.get(activity_type, '•')
+                activity_lines.append(f"  {activity_icon} {activity_type.replace('_', ' ').title()}: {count}")
+
+            # Add key activity highlights (first few activities)
+            if len(activities) > 0:
+                activity_lines.append("")
+                activity_lines.append("📝 Key Activities:")
+
+                # Show first 3 activities as highlights
+                for i, activity in enumerate(activities[:3]):
+                    # Format activity description for display
+                    desc = activity.description
+                    if len(desc) > 100:
+                        desc = desc[:97] + "..."
+                    activity_lines.append(f"  • {desc}")
+
+                # If there are more activities, indicate it
+                if len(activities) > 3:
+                    activity_lines.append(f"  • ... and {len(activities) - 3} more activities")
+
+            # Format as readable output
+            formatted_output = '\n'.join(activity_lines)
+
+            # Also include the filtered JSON if it's meaningful (not just metadata)
+            if filtered_output.strip() and len(filtered_output.strip()) < 2000:
+                # Try to format JSON nicely if it's parseable
+                try:
+                    import json
+                    parsed = json.loads(filtered_output.strip())
+                    pretty_json = json.dumps(parsed, indent=2)
+                    formatted_output += f"\n\n📄 Raw Response:\n{pretty_json}"
+                except (json.JSONDecodeError, TypeError):
+                    # If not JSON or too complex, just add a summary
+                    if len(filtered_output.strip()) > 500:
+                        formatted_output += f"\n\n📄 Response Summary: {filtered_output.strip()[:500]}..."
+                    else:
+                        formatted_output += f"\n\n📄 Raw Response:\n{filtered_output.strip()}"
+
+            return formatted_output, activities
+        else:
+            # No activities found, return filtered output
+            return filtered_output, activities
+
     except Exception as e:
         log_debug(f"Error processing executor output for activity visualization: {e}")
         # On error, return raw output with empty activities
