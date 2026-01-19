@@ -180,3 +180,4 @@ tmp-*
 
 # External tool repositories
 external/
+*.out

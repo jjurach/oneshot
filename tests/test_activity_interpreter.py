@@ -157,6 +157,65 @@ cost: $0.05
         interp2 = get_interpreter()
         assert interp1 is interp2
 
+    def test_extract_json_objects_single_line(self):
+        """Test extraction of single-line JSON objects."""
+        text = '{"type": "say", "text": "hello"}\n{"type": "say", "text": "world"}'
+        objects = self.interpreter._extract_json_objects(text)
+
+        assert len(objects) == 2
+        assert objects[0]["text"] == "hello"
+        assert objects[1]["text"] == "world"
+
+    def test_extract_json_objects_multi_line(self):
+        """Test extraction of multi-line JSON objects."""
+        text = '''{
+  "type": "say",
+  "text": "hello world",
+  "ts": 1234567890
+}
+{
+  "type": "say",
+  "text": "goodbye",
+  "ts": 1234567891
+}'''
+        objects = self.interpreter._extract_json_objects(text)
+
+        assert len(objects) == 2
+        assert objects[0]["type"] == "say"
+        assert objects[0]["text"] == "hello world"
+        assert objects[1]["text"] == "goodbye"
+
+    def test_extract_json_objects_mixed_content(self):
+        """Test extraction from text with mixed JSON and non-JSON content."""
+        text = '''Some text before
+{
+  "type": "say",
+  "text": "test message"
+}
+Some text after
+{
+  "type": "say",
+  "text": "another message"
+}
+More text'''
+        objects = self.interpreter._extract_json_objects(text)
+
+        assert len(objects) == 2
+        assert objects[0]["text"] == "test message"
+        assert objects[1]["text"] == "another message"
+
+    def test_extract_json_objects_malformed(self):
+        """Test that malformed JSON is skipped."""
+        text = '''{"type": "good"}
+{incomplete json
+{"type": "also good"}'''
+        objects = self.interpreter._extract_json_objects(text)
+
+        # Should only extract the two valid objects
+        assert len(objects) == 2
+        assert objects[0]["type"] == "good"
+        assert objects[1]["type"] == "also good"
+
 
 class TestActivityFormatter:
     """Tests for activity formatting."""

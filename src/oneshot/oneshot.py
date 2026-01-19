@@ -769,7 +769,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
                     log_debug(f"{executor} stderr: {stderr}")
 
                 # Process output through activity interpreter to filter sensitive data
-                filtered_output, activities = _process_executor_output(stdout, executor, task_id=None)
+                filtered_output, activities = _process_executor_output(stdout, executor, task_id=None, activity_logger=activity_logger)
                 if activities:
                     log_debug(f"Extracted {len(activities)} activity events from executor output")
                 return filtered_output
@@ -801,14 +801,14 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
             log_debug(f"{executor} stderr: {result.stderr}")
 
         # Process output through activity interpreter to filter sensitive data
-        filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None)
+        filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None, activity_logger=activity_logger)
         if activities:
             log_debug(f"Extracted {len(activities)} activity events from executor output")
         return filtered_output
 
     except subprocess.TimeoutExpired:
         log_info(f"Initial timeout ({initial_timeout}s) exceeded, checking for activity...")
-        return call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval)
+        return call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval, activity_logger)
 
     except Exception as e:
         log_info(f"ERROR: {e}")
@@ -875,7 +875,7 @@ async def call_executor_async(prompt: str, model: Optional[str], executor: str =
         if result.success:
             log_verbose(f"Async {executor} call completed, output length: {len(result.output)} chars")
             # Process output through activity interpreter to filter sensitive data
-            filtered_output, activities = _process_executor_output(result.output, executor, task_id=None)
+            filtered_output, activities = _process_executor_output(result.output, executor, task_id=None, activity_logger=activity_logger)
             if activities:
                 log_debug(f"Extracted {len(activities)} activity events from async executor output")
             return filtered_output
@@ -889,7 +889,7 @@ async def call_executor_async(prompt: str, model: Optional[str], executor: str =
         return f"ERROR: {e}"
 
 
-def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval):
+def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval, activity_logger=None):
     """
     Adaptive timeout with activity monitoring for long-running tasks.
 
@@ -956,7 +956,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
                 if stderr:
                     log_debug(f"{executor} stderr: {stderr}")
                 # Process output through activity interpreter to filter sensitive data
-                filtered_output, activities = _process_executor_output(stdout, executor, task_id=None)
+                filtered_output, activities = _process_executor_output(stdout, executor, task_id=None, activity_logger=activity_logger)
                 if activities:
                     log_debug(f"Extracted {len(activities)} activity events from adaptive PTY output")
                 return filtered_output
@@ -995,7 +995,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
             log_debug(f"{executor} stderr: {result.stderr}")
 
         # Process output through activity interpreter to filter sensitive data
-        filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None)
+        filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None, activity_logger=activity_logger)
         if activities:
             log_debug(f"Extracted {len(activities)} activity events from adaptive buffered output")
         return filtered_output

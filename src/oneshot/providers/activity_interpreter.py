@@ -8,9 +8,12 @@ Converts raw output into structured activity events suitable for UI display.
 
 import json
 import re
+import logging
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class ActivityType(Enum):
@@ -260,6 +263,84 @@ class ActivityInterpreter:
 
         return events
 
+    def _extract_json_objects(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Extract complete JSON objects from text, handling multi-line JSON.
+
+        This method properly handles JSON objects that span multiple lines,
+        which is common in Cline's streaming output format.
+
+        Args:
+            text: Raw text containing JSON objects
+
+        Returns:
+            List of parsed JSON objects
+        """
+        json_objects = []
+        i = 0
+
+        while i < len(text):
+            # Skip whitespace
+            while i < len(text) and text[i].isspace():
+                i += 1
+
+            if i >= len(text):
+                break
+
+            # Look for opening brace
+            if text[i] != '{':
+                i += 1
+                continue
+
+            # Try to parse a complete JSON object starting from this position
+            brace_count = 0
+            start_pos = i
+            in_string = False
+            escape_next = False
+
+            try:
+                for j in range(i, len(text)):
+                    char = text[j]
+
+                    if escape_next:
+                        escape_next = False
+                        continue
+
+                    if char == '\\':
+                        escape_next = True
+                        continue
+
+                    if char == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+
+                    if not in_string:
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                # Found complete JSON object
+                                json_str = text[start_pos:j + 1]
+                                try:
+                                    obj = json.loads(json_str)
+                                    json_objects.append(obj)
+                                    i = j + 1
+                                    break
+                                except json.JSONDecodeError:
+                                    # Not valid JSON, continue searching
+                                    i = start_pos + 1
+                                    break
+                    if j == len(text) - 1:
+                        # Reached end without closing brace
+                        i = start_pos + 1
+                        break
+
+            except IndexError:
+                break
+
+        return json_objects
+
     def interpret_activity(self, raw_output: str, activity_logger=None) -> List[ActivityEvent]:
         """
         Interpret executor output and extract meaningful activity patterns.
@@ -277,23 +358,21 @@ class ActivityInterpreter:
         json_objects = []
         if activity_logger:
             try:
-                # Try to parse raw_output as streaming JSON
-                lines = raw_output.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
+                # Extract complete JSON objects from raw output (handles multi-line JSON)
+                json_objects = self._extract_json_objects(raw_output)
 
+                # Log each valid JSON object to NDJSON file
+                for obj in json_objects:
                     try:
-                        obj = json.loads(line)
-                        json_objects.append(obj)
-                        # Log each valid JSON object to NDJSON file
-                        activity_logger.log_json_line(line)
-                    except json.JSONDecodeError:
-                        # Continue to next line, don't log malformed JSON
-                        pass
+                        json_str = json.dumps(obj, separators=(',', ':'))
+                        activity_logger.log_json_line(json_str)
+                    except (TypeError, ValueError) as e:
+                        # Skip objects that can't be serialized
+                        logger.warning(f"Failed to serialize JSON object for logging: {e}")
+                        continue
             except Exception as e:
                 # If JSON parsing fails completely, skip logging for this output
+                logger.debug(f"Failed to extract JSON objects from raw output: {e}")
                 pass
 
         # Filter metadata first to get clean output for analysis
