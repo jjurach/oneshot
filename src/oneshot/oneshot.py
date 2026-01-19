@@ -383,7 +383,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
 
 
             # Build claude command - only include --model if explicitly provided
-            cmd = ['claude', '-p']
+            cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose']
             if model:
                 cmd.extend(['--model', model])
             cmd.append('--dangerously-skip-permissions')
@@ -556,7 +556,10 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
         if executor == "cline":
             cmd = ['cline', '--yolo', '--no-interactive', '--oneshot', prompt]
         else:
-            cmd = ['claude', '-p', '--model', model, '--dangerously-skip-permissions']
+            cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose']
+            if model:
+                cmd.extend(['--model', model])
+            cmd.append('--dangerously-skip-permissions')
 
         log_debug(f"Starting monitored process: {' '.join(cmd)}")
 
