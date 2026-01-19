@@ -18,6 +18,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 
+# Import activity visualization components
+from oneshot.providers.activity_interpreter import get_interpreter, ActivityType
+from oneshot.providers.activity_formatter import ActivityFormatter, format_for_display
+from oneshot.events import emit_executor_activity
+
 # ============================================================================
 # TEST CONFIGURATION - Prevent blocking subprocess calls in tests
 # ============================================================================
@@ -573,6 +578,56 @@ def parse_json_verdict(json_text):
     return parse_lenient_verdict(json_text)
 
 
+def _process_executor_output(raw_output: str, executor_name: str = "executor", task_id: Optional[str] = None) -> Tuple[str, List[Any]]:
+    """
+    Process executor output through activity interpreter.
+
+    Returns:
+        Tuple of (filtered_output, activity_events)
+    """
+    try:
+        interpreter = get_interpreter()
+
+        # Extract activities from raw output
+        activities = interpreter.interpret_activity(raw_output)
+
+        # Emit activity events asynchronously (non-blocking)
+        if activities:
+            try:
+                # Schedule emission of events without blocking
+                asyncio.create_task(_emit_activities(activities, executor_name, task_id))
+            except RuntimeError:
+                # Not in async context, skip event emission
+                log_debug("Not in async context, skipping activity event emission")
+
+        # Get filtered output (without cost/token metadata)
+        filtered_output = interpreter.get_filtered_output(raw_output)
+
+        return filtered_output, activities
+    except Exception as e:
+        log_debug(f"Error processing executor output for activity visualization: {e}")
+        # On error, return raw output with empty activities
+        return raw_output, []
+
+
+async def _emit_activities(activities: List[Any], executor_name: str, task_id: Optional[str]) -> None:
+    """Emit executor activity events asynchronously."""
+    try:
+        for activity in activities:
+            # Only emit non-sensitive activities
+            if not activity.is_sensitive:
+                await emit_executor_activity(
+                    activity_type=activity.activity_type.value,
+                    description=activity.description,
+                    executor=executor_name,
+                    task_id=task_id,
+                    details=activity.details,
+                    is_sensitive=activity.is_sensitive
+                )
+    except Exception as e:
+        log_debug(f"Error emitting executor activities: {e}")
+
+
 def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30):
     """
     Call executor (claude or cline) with streaming output and adaptive timeout.
@@ -609,7 +664,12 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
                 log_verbose(f"{executor} call completed (PTY), output length: {len(stdout)} chars")
                 if stderr:
                     log_debug(f"{executor} stderr: {stderr}")
-                return stdout
+
+                # Process output through activity interpreter to filter sensitive data
+                filtered_output, activities = _process_executor_output(stdout, executor, task_id=None)
+                if activities:
+                    log_debug(f"Extracted {len(activities)} activity events from executor output")
+                return filtered_output
             except (OSError, subprocess.TimeoutExpired) as e:
                 log_debug(f"PTY execution failed, falling back to buffered: {e}")
                 # Fall through to buffered execution
@@ -636,7 +696,12 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
         log_verbose(f"{executor} call completed (buffered), output length: {len(result.stdout)} chars")
         if result.stderr:
             log_debug(f"{executor} stderr: {result.stderr}")
-        return result.stdout
+
+        # Process output through activity interpreter to filter sensitive data
+        filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None)
+        if activities:
+            log_debug(f"Extracted {len(activities)} activity events from executor output")
+        return filtered_output
 
     except subprocess.TimeoutExpired:
         log_info(f"Initial timeout ({initial_timeout}s) exceeded, checking for activity...")
@@ -706,7 +771,11 @@ async def call_executor_async(prompt: str, model: Optional[str], executor: str =
 
         if result.success:
             log_verbose(f"Async {executor} call completed, output length: {len(result.output)} chars")
-            return result.output
+            # Process output through activity interpreter to filter sensitive data
+            filtered_output, activities = _process_executor_output(result.output, executor, task_id=None)
+            if activities:
+                log_debug(f"Extracted {len(activities)} activity events from async executor output")
+            return filtered_output
         else:
             error_msg = result.error or f"Task failed with exit code {result.exit_code}"
             log_info(f"ERROR: Async {executor} call failed: {error_msg}")
@@ -783,7 +852,11 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
                 log_verbose(f"Adaptive {executor} call completed (PTY), output length: {len(stdout)} chars")
                 if stderr:
                     log_debug(f"{executor} stderr: {stderr}")
-                return stdout
+                # Process output through activity interpreter to filter sensitive data
+                filtered_output, activities = _process_executor_output(stdout, executor, task_id=None)
+                if activities:
+                    log_debug(f"Extracted {len(activities)} activity events from adaptive PTY output")
+                return filtered_output
             except (OSError, subprocess.TimeoutExpired) as e:
                 log_debug(f"PTY adaptive execution failed, falling back to buffered: {e}")
                 # Fall through to buffered execution
@@ -818,7 +891,11 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
         if result.stderr:
             log_debug(f"{executor} stderr: {result.stderr}")
 
-        return result.stdout
+        # Process output through activity interpreter to filter sensitive data
+        filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None)
+        if activities:
+            log_debug(f"Extracted {len(activities)} activity events from adaptive buffered output")
+        return filtered_output
 
     except subprocess.TimeoutExpired:
         log_info(f"ERROR: {executor} call timed out after {max_timeout}s (max timeout reached)")
