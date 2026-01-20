@@ -902,7 +902,8 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
         # Extract activities from raw output, passing logger for NDJSON logging
         activities = interpreter.interpret_activity(raw_output, activity_logger)
 
-        # If we extracted text from JSON, log it
+        # If we extracted text from JSON, use it as primary output
+        aggregated_text = None
         if extracted_texts:
             aggregated_text = '\n'.join(extracted_texts)
             log_debug(f"[EXECUTOR OUTPUT] Aggregated extracted text ({len(aggregated_text)} chars):")
@@ -976,7 +977,12 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
                 if len(activities) > 3:
                     activity_lines.append(f"  • ... and {len(activities) - 3} more activities")
 
-            # Format as readable output
+            # If we extracted JSON text from the stream, use that as primary output
+            if aggregated_text:
+                log_debug(f"[EXECUTOR OUTPUT] Returning extracted JSON as primary output ({len(aggregated_text)} bytes)")
+                return aggregated_text, activities
+
+            # Otherwise, format activity summary
             formatted_output = '\n'.join(activity_lines)
 
             # Also include the filtered JSON if it's meaningful (not just metadata)
@@ -996,7 +1002,12 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
 
             return formatted_output, activities
         else:
-            # No meaningful activities or no logger, return filtered output
+            # No meaningful activities or no logger
+            # But if we have extracted JSON text, return that
+            if aggregated_text:
+                log_debug(f"[EXECUTOR OUTPUT] Returning extracted JSON (no meaningful activities) ({len(aggregated_text)} bytes)")
+                return aggregated_text, activities
+            # Otherwise return filtered output
             return filtered_output, activities
 
     except Exception as e:
