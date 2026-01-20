@@ -1769,15 +1769,32 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
         mode = 'a'
     else:
         auto_generated_log = True
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = SESSION_DIR / f"session_{timestamp}.md"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_file = SESSION_DIR / f"{timestamp}_oneshot.json"
         session_context = None
         iteration = 1
         mode = 'w'
         log_info(f"Creating new session: {log_file.name}")
         log_verbose(f"Session directory: {SESSION_DIR}")
-        with open(log_file, mode) as f:
-            f.write(f"# Oneshot Session Log - {datetime.now()}\n\n")
+
+        # Initialize JSON session log structure
+        session_data = {
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "prompt": prompt,
+                "worker_provider": worker_provider.config.provider_type,
+                "worker_executor": getattr(worker_provider.config, 'executor', None),
+                "worker_model": worker_provider.config.model,
+                "auditor_provider": auditor_provider.config.provider_type,
+                "auditor_executor": getattr(auditor_provider.config, 'executor', None),
+                "auditor_model": auditor_provider.config.model,
+                "max_iterations": max_iterations,
+                "working_directory": str(Path.cwd())
+            },
+            "iterations": []
+        }
+        with open(log_file, 'w') as f:
+            json.dump(session_data, f, indent=2)
 
     # Create orchestrator for concurrent task execution
     orchestrator = AsyncOrchestrator(
@@ -1804,19 +1821,23 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
             dump_buffer("Worker Output", worker_output)
             print(worker_output)
 
-            # Log worker output
+            # Log worker output to session file
             log_verbose("Logging worker output to session file")
-            with open(log_file, 'a') as f:
-                f.write(f"\n## Iteration {iteration} - Worker Output\n\n")
-                f.write(strip_ansi(worker_output) + "\n")
+            with open(log_file, 'r') as f:
+                session_data = json.load(f)
+
+            iteration_data = {"iteration": iteration, "worker_output": strip_ansi(worker_output)}
+            session_data["iterations"].append(iteration_data)
+
+            with open(log_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
 
             # 2. Summary Stats
-            with open(log_file, 'r') as f:
-                log_lines = len(f.readlines())
-            print(f"Log Size: {log_lines} lines.")
+            iteration_count = len(session_data.get("iterations", []))
+            print(f"Log Size: {iteration_count} iteration(s).")
             print("Last worker output:")
             print('\n'.join(worker_output.split('\n')[-3:]))
-            log_debug(f"Session file size: {log_lines} lines")
+            log_debug(f"Session iterations: {iteration_count}")
 
             # 3. Success Auditor Step
             print("\n--- ⚖️ Auditor: Checking Progress ---")
@@ -1848,11 +1869,17 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
             audit_response, _ = await auditor_provider.generate_async(full_auditor_prompt)
             dump_buffer("Auditor Response", audit_response)
 
-            # Log auditor response
+            # Log auditor response to session file
             log_verbose("Logging auditor response to session file")
-            with open(log_file, 'a') as f:
-                f.write(f"\n### Iteration {iteration} - Auditor Response\n\n")
-                f.write(strip_ansi(audit_response) + "\n")
+            with open(log_file, 'r') as f:
+                session_data = json.load(f)
+
+            # Find the current iteration's data and add auditor response
+            if session_data["iterations"] and session_data["iterations"][-1]["iteration"] == iteration:
+                session_data["iterations"][-1]["auditor_response"] = strip_ansi(audit_response)
+
+            with open(log_file, 'w') as f:
+                json.dump(session_data, f, indent=2)
 
             # Extract verdict from auditor response using lenient parsing
             log_verbose("Extracting verdict from auditor response (lenient parsing)")
@@ -1874,8 +1901,15 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
             if verdict and verdict.upper() == "DONE":
                 print("✅ Auditor confirmed: DONE.")
                 log_info(f"Task completed successfully in {iteration} iteration(s)")
-                with open(log_file, 'a') as f:
-                    f.write("\n✅ Task completed successfully!\n")
+
+                # Update session data with completion status
+                with open(log_file, 'r') as f:
+                    session_data = json.load(f)
+                session_data["metadata"]["completion_status"] = "success"
+                session_data["metadata"]["completed_at"] = datetime.now().isoformat()
+                session_data["metadata"]["final_iteration"] = iteration
+                with open(log_file, 'w') as f:
+                    json.dump(session_data, f, indent=2)
 
                 # Clean up auto-generated session logs unless keep_log is True or session_log was specified
                 if auto_generated_log and not keep_log:

@@ -839,8 +839,8 @@ class TestAsyncOneshot:
                     )
 
                     assert success is True
-                    # Check that the log file was deleted
-                    log_files = list(Path(tmpdir).glob("session_*.md"))
+                    # Check that the log file was deleted (oneshot.json format)
+                    log_files = list(Path(tmpdir).glob("*oneshot*.json"))
                     assert len(log_files) == 0
 
     @pytest.mark.asyncio
@@ -868,8 +868,8 @@ class TestAsyncOneshot:
                     )
 
                     assert success is False
-                    # Check that the log file was NOT deleted
-                    log_files = list(Path(tmpdir).glob("session_*.md"))
+                    # Check that the log file was NOT deleted (oneshot.json format)
+                    log_files = list(Path(tmpdir).glob("*oneshot*.json"))
                     assert len(log_files) == 1
 
 
