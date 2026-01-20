@@ -56,7 +56,65 @@ General references to "planning" e.g. "plan this" or "Start thinking about next 
 
 ## 2.1. Documentation Index & Quick Reference
 
-Insert project specific information here.
+### Active Project Plans
+
+#### Executor Abstraction Refactor
+**Source**: `dev_notes/requests/prompt-11.md`
+**Detailed Plan**: `dev_notes/project_plans/2026-01-20_executor-abstraction-detailed.md`
+
+- **Objective**: Consolidate all agent execution logic (cline, claude, gemini, aider, direct) into a unified, extensible executor architecture
+- **Key Deliverables**:
+  - Base `Executor` abstract class with standardized interface (in `src/oneshot/providers/base.py`)
+  - Five executor implementations: `ClineExecutor`, `ClaudeExecutor`, `GeminiExecutor`, `AiderExecutor`, `DirectExecutor`
+    - Each isolated to its own file: `src/oneshot/providers/{executor_name}_executor.py`
+    - Each implements: `select_command()`, `parse_activity()`, `format_output()`, `executor_type` property
+    - All executor-specific references isolated within executor classes
+  - Comprehensive test suite (`tests/test_executor_framework.py`) covering:
+    - Command construction for all executors
+    - Activity parsing (streaming format interpretation) for all executors
+    - Output formatting for all executors
+    - Edge cases and error conditions
+  - Demo scripts with live checklist tracking:
+    - `demo_executor_single.py`: Single executor demonstration with progress checklist
+    - `demo_executor_all.py`: Cross-executor comparison with progress tracking
+  - Developer guide (`docs/executor_implementation_guide.md`) for implementing new executors
+- **Status**: Plan approved, awaiting implementation
+- **Complexity**: High (6 phases, affects core architecture)
+- **Key Methods** (standardized interface):
+  - `select_command()`: Choose and construct executor-specific command
+  - `parse_activity()`: Parse streaming activity into structured results (stdout summary + audit details)
+  - `format_output()`: Generate formatted output for display and audit log
+  - `executor_type` (property): Identifier string for executor (e.g., "cline", "claude", "gemini", "aider", "direct")
+- **Implementation Phases**:
+  1. Base executor architecture design with abstract interface
+  2. Implement five executor classes, isolating all executor-specific logic
+  3. Create comprehensive test suite with cross-executor validation
+  4. Create demo scripts with detailed checklist tracking for each step
+  5. Documentation (guide + AGENTS.md updates)
+  6. Final validation, regression testing, and commit
+- **Testing Requirements**:
+  - Unit tests for each executor (command, activity parsing, output formatting)
+  - All executor tests passing (no failures)
+  - Full pytest suite passes (no regressions in existing code)
+  - Demo scripts execute without errors
+  - Activity parsing validated across all executor formats
+- **Progress Tracking**:
+  - Use detailed checklists in each Phase (update upon completion)
+  - Demo scripts include live checklist updates during execution
+  - Run full test suite after each major phase
+
+### Project Components Reference
+- **Executors Location**: `src/oneshot/providers/`
+- **Existing Implementations**:
+  - `base.py` - Base executor class (may need refactoring)
+  - `cline_executor.py` - Cline integration
+  - `claude_executor.py` - Claude Code integration
+  - `gemini_executor.py` - Gemini execution
+  - `aider_executor.py` - Aider execution
+  - `direct_executor.py` - Direct OpenAI execution
+- **Activity Processing**: `activity_formatter.py`, `activity_interpreter.py`, `activity_logger.py`
+- **Tests Location**: `tests/`
+- **Demo Scripts**: Root directory (`demo_*.py`)
 
 ---
 
