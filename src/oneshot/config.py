@@ -18,7 +18,7 @@ except ImportError:
 # Default configuration values (matching CLI defaults)
 DEFAULT_CONFIG = {
     "executor": "cline",
-    "max_iterations": 5,
+    "max_iterations": 1,  # Do not loop until we control context better
     "worker_model": None,  # Will be set based on executor
     "auditor_model": None,  # Will be set based on executor
     "worker_prompt_header": "oneshot execution",
