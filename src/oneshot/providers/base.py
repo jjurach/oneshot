@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 @dataclass
 class ExecutionResult:
@@ -25,7 +25,8 @@ class BaseExecutor(ABC):
     Abstract base class for autonomous executor providers.
 
     Defines the common interface and core methods that all executor providers
-    must implement.
+    must implement. Each executor encapsulates command construction, activity
+    parsing, and output formatting specific to its agent type.
     """
 
     @abstractmethod
@@ -38,6 +39,70 @@ class BaseExecutor(ABC):
 
         Returns:
             ExecutionResult: Detailed result of the task execution
+        """
+        pass
+
+    @abstractmethod
+    def build_command(self, prompt: str, model: Optional[str] = None) -> List[str]:
+        """
+        Build executor-specific CLI command for invoking the agent.
+
+        Args:
+            prompt (str): The task prompt to send to the executor
+            model (Optional[str]): Optional model specification for executors that support it
+
+        Returns:
+            List[str]: Command and arguments as a list for subprocess execution
+        """
+        pass
+
+    @abstractmethod
+    def parse_streaming_activity(self, raw_output: str) -> Tuple[str, Dict[str, Any]]:
+        """
+        Parse streaming output from the executor into structured results.
+
+        Interprets agent-specific output format (JSON stream, text patterns, etc.)
+        and extracts meaningful activity information.
+
+        Args:
+            raw_output (str): Raw streaming output from executor
+
+        Returns:
+            Tuple[str, Dict[str, Any]]: (stdout_summary, auditor_details_dict)
+                - stdout_summary: Human-readable summary of the execution
+                - auditor_details_dict: Structured details for audit logging
+        """
+        pass
+
+    @abstractmethod
+    def get_provider_name(self) -> str:
+        """
+        Get the executor type identifier.
+
+        Returns:
+            str: Executor type name (e.g., "cline", "claude", "gemini", "aider", "direct")
+        """
+        pass
+
+    @abstractmethod
+    def get_provider_metadata(self) -> Dict[str, Any]:
+        """
+        Get provider-specific configuration metadata.
+
+        Returns:
+            Dict[str, Any]: Metadata dictionary with executor-specific configuration
+                - Should include type, capabilities, constraints, etc.
+        """
+        pass
+
+    @abstractmethod
+    def should_capture_git_commit(self) -> bool:
+        """
+        Indicate whether this executor produces git commits that should be captured.
+
+        Returns:
+            bool: True if executor creates git commits (Cline, Claude, Aider)
+                  False if it doesn't (Gemini, Direct)
         """
         pass
 

@@ -3,7 +3,7 @@ Direct executor that forwards prompts to Ollama via HTTP API.
 """
 
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Tuple
 from .base import BaseExecutor, ExecutionResult
 from .ollama_client import OllamaClient, OllamaResponse
 
@@ -14,6 +14,9 @@ class DirectExecutor(BaseExecutor):
 
     This serves as a simple worker role executor that can answer basic queries
     and provides a foundation for future lang-graph experimentation.
+
+    Note: This executor uses HTTP API instead of subprocess, so build_command
+    is not applicable.
     """
 
     def __init__(self, model: str = "llama-pro:latest", base_url: str = "http://localhost:11434", timeout: int = 300):
@@ -29,6 +32,88 @@ class DirectExecutor(BaseExecutor):
         self.base_url = base_url
         self.timeout = timeout
         self.client = OllamaClient(base_url=base_url, timeout=timeout)
+
+    def get_provider_name(self) -> str:
+        """
+        Get the executor type identifier.
+
+        Returns:
+            str: "direct"
+        """
+        return "direct"
+
+    def get_provider_metadata(self) -> Dict[str, Any]:
+        """
+        Get Direct-specific configuration metadata.
+
+        Returns:
+            Dict[str, Any]: Metadata including type, capabilities, constraints
+        """
+        return {
+            "type": "direct",
+            "name": "Direct (Ollama)",
+            "description": "Direct HTTP API executor for Ollama models",
+            "output_format": "json",
+            "supports_model_selection": True,
+            "captures_git_commits": False,
+            "requires_pty": False,
+            "model": self.model,
+            "base_url": self.base_url,
+            "timeout_seconds": self.timeout,
+            "execution_method": "http_api",
+            "note": "API-based executor, not subprocess-based"
+        }
+
+    def should_capture_git_commit(self) -> bool:
+        """
+        Direct executor does not capture git commits.
+
+        Returns:
+            bool: False
+        """
+        return False
+
+    def build_command(self, prompt: str, model: Optional[str] = None) -> List[str]:
+        """
+        Build command for Direct executor.
+
+        Note: Direct executor uses HTTP API instead of subprocess,
+        so this method is not directly used in execution.
+
+        Args:
+            prompt (str): The task prompt (informational only)
+            model (Optional[str]): Optional model override
+
+        Returns:
+            List[str]: Empty list (no subprocess command used)
+        """
+        # Direct executor doesn't use subprocess, so command is N/A
+        # This is provided for interface compliance
+        return ["ollama", "api", f"--model={model or self.model}"]
+
+    def parse_streaming_activity(self, raw_output: str) -> Tuple[str, Dict[str, Any]]:
+        """
+        Parse Direct executor's output (Ollama API response).
+
+        Direct executor returns structured JSON responses from the Ollama API.
+        This method formats the response for consistent handling.
+
+        Args:
+            raw_output (str): Raw output from Ollama (or structured response)
+
+        Returns:
+            Tuple[str, Dict[str, Any]]: (stdout_summary, auditor_details)
+        """
+        # For Direct executor, the output is already structured
+        # Just prepare auditor details
+        auditor_details = {
+            "executor_type": "direct",
+            "model": self.model,
+            "base_url": self.base_url,
+            "output_length": len(raw_output)
+        }
+
+        return raw_output, auditor_details
 
     def run_task(self, task: str) -> ExecutionResult:
         """

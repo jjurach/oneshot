@@ -1,0 +1,275 @@
+"""
+ClaudeExecutor - Executor implementation for Claude CLI agent.
+
+Encapsulates all Claude-specific command construction, activity parsing,
+and output formatting logic.
+"""
+
+import json
+import re
+from typing import List, Optional, Dict, Any, Tuple
+from .base import BaseExecutor, ExecutionResult
+
+
+class ClaudeExecutor(BaseExecutor):
+    """
+    Executor for the Claude CLI agent.
+
+    Claude CLI outputs streaming JSON in stream-json format with activity information.
+    This executor handles command construction with Claude-specific flags,
+    parsing of streaming JSON output, and extraction of meaningful activity.
+    """
+
+    def __init__(self, model: Optional[str] = None):
+        """
+        Initialize ClaudeExecutor.
+
+        Args:
+            model (Optional[str]): Optional model specification (e.g., "claude-3-sonnet")
+        """
+        self.model = model
+
+    def get_provider_name(self) -> str:
+        """
+        Get the executor type identifier.
+
+        Returns:
+            str: "claude"
+        """
+        return "claude"
+
+    def get_provider_metadata(self) -> Dict[str, Any]:
+        """
+        Get Claude-specific configuration metadata.
+
+        Returns:
+            Dict[str, Any]: Metadata including type, capabilities, constraints
+        """
+        return {
+            "type": "claude",
+            "name": "Claude",
+            "description": "Claude Code - Autonomous coding assistant from Anthropic",
+            "output_format": "stream_json",
+            "supports_model_selection": True,
+            "captures_git_commits": True,
+            "requires_pty": True,
+            "timeout_seconds": 300,
+            "model": self.model,
+            "flags": ["-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]
+        }
+
+    def should_capture_git_commit(self) -> bool:
+        """
+        Claude creates git commits for its changes.
+
+        Returns:
+            bool: True
+        """
+        return True
+
+    def build_command(self, prompt: str, model: Optional[str] = None) -> List[str]:
+        """
+        Build Claude CLI command for executing a task.
+
+        Claude command format:
+        claude -p --output-format stream-json --verbose [--model <model>] --dangerously-skip-permissions "<prompt>"
+
+        Args:
+            prompt (str): The task prompt to send to Claude
+            model (Optional[str]): Optional model specification (overrides instance model)
+
+        Returns:
+            List[str]: Command and arguments for subprocess execution
+        """
+        # Use provided model or fall back to instance model
+        effective_model = model or self.model
+
+        cmd = [
+            'claude',
+            '-p',  # Print mode (outputs to stdout)
+            '--output-format', 'stream-json',  # Stream JSON format for activity events
+            '--verbose',  # Verbose output with detailed information
+        ]
+
+        # Add model if specified
+        if effective_model:
+            cmd.extend(['--model', effective_model])
+
+        cmd.append('--dangerously-skip-permissions')  # Skip permission prompts
+        cmd.append(prompt)  # The task prompt
+
+        return cmd
+
+    def parse_streaming_activity(self, raw_output: str) -> Tuple[str, Dict[str, Any]]:
+        """
+        Parse Claude's streaming JSON output into structured results.
+
+        Claude outputs a stream of JSON objects in stream-json format. Each object may contain:
+        - "say": "completion_result" with "text" field for final result
+        - "ask": "plan_mode_respond" with "text" field for plan responses
+        - Other activity types with execution details
+
+        Args:
+            raw_output (str): Raw streaming output containing JSON objects
+
+        Returns:
+            Tuple[str, Dict[str, Any]]: (stdout_summary, auditor_details)
+        """
+        # Split JSON stream into individual objects
+        json_objects = self._split_json_stream(raw_output)
+
+        # Extract completion results from JSON activity objects
+        extracted_texts = []
+        activity_details = []
+
+        for json_obj in json_objects:
+            text = self._extract_activity_text(json_obj)
+            if text:
+                extracted_texts.append(text)
+
+            # Collect all activity for audit log
+            activity_details.append({
+                "type": self._get_activity_type(json_obj),
+                "object": json_obj
+            })
+
+        # Aggregate extracted texts as primary output
+        stdout_summary = '\n'.join(extracted_texts) if extracted_texts else raw_output
+
+        # Prepare auditor details
+        auditor_details = {
+            "executor_type": "claude",
+            "activity_count": len(activity_details),
+            "activities": activity_details,
+            "extracted_text_segments": len(extracted_texts),
+            "raw_output_length": len(raw_output),
+            "model": self.model
+        }
+
+        return stdout_summary, auditor_details
+
+    def run_task(self, task: str) -> ExecutionResult:
+        """
+        Execute a task using Claude.
+
+        Args:
+            task (str): The task to execute
+
+        Returns:
+            ExecutionResult: Result with output and metadata
+        """
+        # This is implemented in the oneshot.py orchestrator
+        # The abstract method is defined here for interface compliance
+        raise NotImplementedError("run_task is implemented by orchestrator")
+
+    # ========================================================================
+    # HELPER METHODS
+    # ========================================================================
+
+    @staticmethod
+    def _split_json_stream(raw_output: str) -> List[Dict[str, Any]]:
+        """
+        Split streaming JSON output from Claude by JSON object boundaries.
+
+        Claude outputs a stream of JSON objects. This function finds each object
+        by looking for complete JSON structures (starts with { and ends with }).
+
+        Args:
+            raw_output (str): Raw streaming output containing multiple JSON objects
+
+        Returns:
+            List[Dict[str, Any]]: List of parsed JSON objects, or empty list if none found
+        """
+        json_objects = []
+
+        if not raw_output or not raw_output.strip():
+            return json_objects
+
+        # Remove ANSI escape codes that Claude includes
+        ansi_escape = re.compile(r'\x1B\[[0-9;]*m|\[38;5;\d+m')
+        cleaned = ansi_escape.sub('', raw_output)
+
+        # Find each complete JSON object by tracking braces
+        brace_count = 0
+        current_json = []
+        in_json = False
+
+        for char in cleaned:
+            if char == '{':
+                if not in_json:
+                    in_json = True
+                    current_json = []
+                current_json.append(char)
+                brace_count += 1
+            elif char == '}':
+                current_json.append(char)
+                brace_count -= 1
+                if in_json and brace_count == 0:
+                    # Complete JSON object found
+                    json_str = ''.join(current_json)
+                    try:
+                        obj = json.loads(json_str)
+                        json_objects.append(obj)
+                    except json.JSONDecodeError:
+                        pass  # Skip malformed JSON
+                    in_json = False
+                    current_json = []
+            elif in_json:
+                current_json.append(char)
+
+        return json_objects
+
+    @staticmethod
+    def _extract_activity_text(json_object: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract text content from specific Claude activity types.
+
+        Looks for:
+        - Activities with "say":"completion_result"
+        - Activities with "ask":"plan_mode_respond"
+
+        Args:
+            json_object (Dict[str, Any]): Parsed JSON object from Claude output
+
+        Returns:
+            Optional[str]: The "text" property if matching activity, None otherwise
+        """
+        if not isinstance(json_object, dict):
+            return None
+
+        # Check for "say":"completion_result"
+        if json_object.get('say') == 'completion_result':
+            text = json_object.get('text')
+            if text:
+                return text
+
+        # Check for "ask":"plan_mode_respond"
+        if json_object.get('ask') == 'plan_mode_respond':
+            text = json_object.get('text')
+            if text:
+                return text
+
+        return None
+
+    @staticmethod
+    def _get_activity_type(json_object: Dict[str, Any]) -> str:
+        """
+        Determine the activity type from a JSON object.
+
+        Args:
+            json_object (Dict[str, Any]): Parsed JSON object
+
+        Returns:
+            str: Activity type name
+        """
+        if not isinstance(json_object, dict):
+            return "unknown"
+
+        if 'say' in json_object:
+            return f"say_{json_object.get('say', 'unknown')}"
+        if 'ask' in json_object:
+            return f"ask_{json_object.get('ask', 'unknown')}"
+        if 'event' in json_object:
+            return f"event_{json_object.get('event', 'unknown')}"
+
+        return "unknown_activity"
