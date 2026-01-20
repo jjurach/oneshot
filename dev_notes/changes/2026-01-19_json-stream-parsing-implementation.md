@@ -18,12 +18,17 @@ Enhanced `_process_executor_output()` to properly handle cline's streaming JSON 
 2. **Activity Text Extraction**: New `extract_activity_text()` function extracts text from:
    - Activities with `"say":"completion_result"`
    - Activities with `"ask":"plan_mode_respond"`
-3. **Enhanced Debug Logging**: Comprehensive debug output showing:
+3. **Extracted JSON as Primary Output**: Critical fix!
+   - Returns extracted JSON text as `worker_output` instead of activity summary
+   - Ensures auditor receives actual JSON responses
+   - Enables proper JSON extraction for auditor validation
+   - Closes the loop: extraction → output → auditor processing
+4. **Enhanced Debug Logging**: Comprehensive debug output showing:
    - ANSI code removal and cleaned output length
    - JSON object count and structure
    - Text extraction results
    - Aggregated text content
-4. **Bug Fix**: Fixed undefined `filtered_lines` variable at line 1582 (changed to `filtered_count`)
+5. **Bug Fix**: Fixed undefined `filtered_lines` variable at line 1582 (changed to `filtered_count`)
 
 ## Files Modified
 
@@ -42,11 +47,13 @@ Enhanced `_process_executor_output()` to properly handle cline's streaming JSON 
   - Supports `"ask":"plan_mode_respond"` activities
   - Includes debug logging for text extraction
 
-- **Lines 880-910**: Enhanced `_process_executor_output()` function
-  - Calls `split_json_stream()` on raw output
-  - Iterates through JSON objects to extract text
-  - Aggregates extracted text segments
-  - Logs results for debugging
+- **Lines 905-1011**: Enhanced `_process_executor_output()` function
+  - Calls `split_json_stream()` to parse JSON objects from cline output
+  - Iterates through objects to extract text via `extract_activity_text()`
+  - Aggregates extracted text segments into `aggregated_text`
+  - **Returns extracted JSON as primary output** instead of activity summary
+  - Improves auditor ability to extract and parse worker responses
+  - Handles both meaningful activities and no activities cases
   - Maintains backward compatibility with existing activity interpreter
 
 - **Line 1582**: Fixed undefined `filtered_lines` variable
