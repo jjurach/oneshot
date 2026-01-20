@@ -161,7 +161,7 @@ class TestCallExecutor:
         })()
 
         result = call_executor("test prompt", "claude-3-5-haiku", "claude")
-        assert result == "Mock output"
+        assert result[0] == "Mock output"
 
         mock_run.assert_called_once()
         args, kwargs = mock_run.call_args
@@ -188,7 +188,7 @@ class TestCallExecutor:
         })()
 
         result = call_executor("test prompt", None, "cline")
-        assert result == "Mock output"
+        assert result[0] == "Mock output"
 
         mock_run.assert_called_once()
         args, kwargs = mock_run.call_args
@@ -207,7 +207,7 @@ class TestCallExecutor:
         mock_run.side_effect = TimeoutExpired("cmd", 300)
 
         result = call_executor("test prompt", "model", "claude")
-        assert "timed out" in result
+        assert "timed out" in result[0]
 
     @patch('oneshot.oneshot._check_test_mode_blocking')
     @patch('oneshot.oneshot.call_executor_pty')
@@ -220,7 +220,7 @@ class TestCallExecutor:
         mock_run.side_effect = Exception("Test error")
 
         result = call_executor("test prompt", "model", "claude")
-        assert "ERROR: Test error" == result
+        assert "ERROR: Test error" == result[0]
 
     @patch('oneshot.oneshot._check_test_mode_blocking')
     @patch('oneshot.oneshot.call_executor_pty')
@@ -244,7 +244,7 @@ class TestCallExecutor:
         ]
 
         result = call_executor("test prompt", "model", "claude", initial_timeout=300, max_timeout=3600)
-        assert result == "Adaptive output"
+        assert result[0] == "Adaptive output"
 
         assert mock_run.call_count == 2
 
@@ -348,7 +348,7 @@ class TestRunOneshot:
 }
 '''
 
-        mock_call.side_effect = [worker_response, auditor_response]
+        mock_call.side_effect = [(worker_response, []), (auditor_response, [])]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Override SESSION_DIR for this test
@@ -794,7 +794,7 @@ class TestAsyncExecutor:
 
             result = await call_executor_async("test prompt", None, "cline")
 
-            assert result == "mock output"
+            assert result[0] == "mock output"
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(10)
@@ -803,11 +803,11 @@ class TestAsyncExecutor:
         from oneshot.oneshot import call_executor_async
 
         with patch('oneshot.oneshot.call_executor') as mock_sync_call:
-            mock_sync_call.return_value = "sync result"
+            mock_sync_call.return_value = ("sync result", [])
 
             result = await call_executor_async("test prompt", "model", "claude")
 
-            assert result == "sync result"
+            assert result[0] == "sync result"
             mock_sync_call.assert_called_once()
 
 
@@ -826,7 +826,7 @@ class TestAsyncOneshot:
             worker_response = '''{"status": "DONE", "result": "Task completed"}'''
             auditor_response = '''{"verdict": "DONE", "reason": "Perfect"}'''
 
-            mock_call.side_effect = [worker_response, auditor_response]
+            mock_call.side_effect = [(worker_response, []), (auditor_response, [])]
 
             with tempfile.TemporaryDirectory() as tmpdir:
                 with patch('oneshot.oneshot.SESSION_DIR', Path(tmpdir)):
@@ -962,8 +962,8 @@ class TestMain:
         """Test that main succeeds when cline executor is used without a model."""
         # Mock the return value of call_executor to simulate a successful run
         mock_call_executor.side_effect = [
-            '{"status": "DONE", "result": "Success"}',
-            '{"verdict": "DONE", "reason": "Perfect"}'
+            ('{"status": "DONE", "result": "Success"}', []),
+            ('{"verdict": "DONE", "reason": "Perfect"}', [])
         ] * 5
         with patch('sys.exit') as mock_exit:
             oneshot_main()
@@ -975,8 +975,8 @@ class TestMain:
         """Test that main succeeds when claude executor is used with a model."""
         # Mock the return value of call_executor to simulate a successful run
         mock_call_executor.side_effect = [
-            '{"status": "DONE", "result": "Success"}',
-            '{"verdict": "DONE", "reason": "Perfect"}'
+            ('{"status": "DONE", "result": "Success"}', []),
+            ('{"verdict": "DONE", "reason": "Perfect"}', [])
         ] * 5
         with patch('sys.exit') as mock_exit:
             oneshot_main()

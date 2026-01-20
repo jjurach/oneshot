@@ -18,19 +18,19 @@ class TestRunOneshot:
         """Test successful completion on first iteration."""
         mock_count.return_value = 0
         mock_call.side_effect = [
-            "worker output",  # First worker call, no JSON
-            '{"status": "DONE", "result": "Success"}',  # Second worker call, with JSON
-            '{"verdict": "DONE", "reason": "Success"}'   # Auditor call
+            ('Some output\n{"status": "DONE", "result": "Success"}', []),  # Worker call with valid JSON
+            ('{"verdict": "DONE", "reason": "Success"}', [])   # Auditor call
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            success = run_oneshot(
-                "test task",
-                worker_model="test_worker_model",
-                auditor_model="test_auditor_model",
-                max_iterations=3
-            )
-            assert success is True
+            with patch('oneshot.oneshot.SESSION_DIR', Path(tmpdir)):
+                success = run_oneshot(
+                    "test task",
+                    worker_model="test_worker_model",
+                    auditor_model="test_auditor_model",
+                    max_iterations=3
+                )
+                assert success is True
 
     @patch('oneshot.oneshot.call_executor')
     @patch('oneshot.oneshot.count_iterations')
@@ -39,12 +39,12 @@ class TestRunOneshot:
         """Test max iterations reached."""
         mock_count.return_value = 0
 
-        # Create a generator that cycles through responses to avoid StopIteration
+        # Create a generator that alternates between worker and auditor responses
         def response_generator():
-            responses = [
-                '{"result": "Success"}',
-                '{"verdict": "REITERATE", "reason": "Try again"}',
-            ]
+            worker_response = ('Some output\n{"status": "INCOMPLETE", "result": "Success"}', [])
+            auditor_response = ('{"verdict": "REITERATE", "reason": "Try again"}', [])
+
+            responses = [worker_response, auditor_response]
             i = 0
             while True:
                 yield responses[i % len(responses)]
@@ -53,13 +53,14 @@ class TestRunOneshot:
         mock_call.side_effect = response_generator()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            success = run_oneshot(
-                "test task",
-                worker_model="test_worker_model",
-                auditor_model="test_auditor_model",
-                max_iterations=3
-            )
-            assert success is False
+            with patch('oneshot.oneshot.SESSION_DIR', Path(tmpdir)):
+                success = run_oneshot(
+                    "test task",
+                    worker_model="test_worker_model",
+                    auditor_model="test_auditor_model",
+                    max_iterations=3
+                )
+                assert success is False
 
 
 class TestAsyncOneshot:
@@ -75,9 +76,9 @@ class TestAsyncOneshot:
         with patch('oneshot.oneshot.call_executor_async') as mock_call:
             # Mock successful worker and auditor responses
             mock_call.side_effect = [
-                "worker output",
-                '{"status": "DONE", "result": "Success"}',
-                '{"verdict": "DONE", "reason": "Success"}'
+                ("worker output", []),
+                ('{"status": "DONE", "result": "Success"}', []),
+                ('{"verdict": "DONE", "reason": "Success"}', [])
             ]
 
             with tempfile.TemporaryDirectory() as tmpdir:
@@ -101,12 +102,12 @@ class TestAsyncOneshot:
         with patch('oneshot.oneshot.call_executor_async') as mock_call:
             # Mock responses that always reiterate
             mock_call.side_effect = [
-                '{"status": "DONE", "result": "Success"}',
-                '{"verdict": "REITERATE", "reason": "Try again"}',
-                '{"status": "DONE", "result": "Success"}',
-                '{"verdict": "REITERATE", "reason": "Try again"}',
-                '{"status": "DONE", "result": "Success"}',
-                '{"verdict": "REITERATE", "reason": "Try again"}',
+                ('{"status": "DONE", "result": "Success"}', []),
+                ('{"verdict": "REITERATE", "reason": "Try again"}', []),
+                ('{"status": "DONE", "result": "Success"}', []),
+                ('{"verdict": "REITERATE", "reason": "Try again"}', []),
+                ('{"status": "DONE", "result": "Success"}', []),
+                ('{"verdict": "REITERATE", "reason": "Try again"}', []),
             ]
 
             with tempfile.TemporaryDirectory() as tmpdir:

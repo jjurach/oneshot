@@ -304,7 +304,7 @@ class TestDirectProvider:
 
             result = provider.generate("Test prompt")
 
-            assert result == "Test response"
+            assert result[0] == "Test response"
             mock_client.generate.assert_called_once_with(
                 model="qwen3-8b-coding",
                 prompt="Test prompt",
@@ -328,8 +328,8 @@ class TestDirectProvider:
 
             result = provider.generate("Test prompt")
 
-            assert "ERROR" in result
-            assert "Ollama call failed" in result
+            assert "ERROR" in result[0]
+            assert "Ollama call failed" in result[0]
 
     @pytest.mark.asyncio
     async def test_direct_provider_generate_async_success(self):
@@ -354,7 +354,7 @@ class TestDirectProvider:
 
             result = await provider.generate_async("Test prompt")
 
-            assert result == "Async test response"
+            assert result[0] == "Async test response"
 
 
 # ============================================================================

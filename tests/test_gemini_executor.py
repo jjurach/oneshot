@@ -183,7 +183,7 @@ class TestGeminiProviderIntegration:
         # Verify _call_gemini_executor was called
         mock_call_gemini.assert_called_once_with("test prompt")
 
-        assert result == "test output"
+        assert result[0] == "test output"
 
     def test_provider_config_validation_gemini_executor(self):
         """Test that gemini executor passes validation."""

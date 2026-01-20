@@ -159,11 +159,11 @@ async def test_full_async_oneshot_workflow():
         mock_auditor = AsyncMock()
 
         # Worker returns valid JSON response
-        mock_worker.generate_async.return_value = '{"status": "DONE", "result": "Test completed successfully", "confidence": "high"}'
+        mock_worker.generate_async.return_value = ('{"status": "DONE", "result": "Test completed successfully", "confidence": "high"}', [])
         mock_worker.config = worker_config
 
         # Auditor confirms completion
-        mock_auditor.generate_async.return_value = '{"verdict": "DONE", "reason": "Task completed successfully"}'
+        mock_auditor.generate_async.return_value = ('{"verdict": "DONE", "reason": "Task completed successfully"}', [])
         mock_auditor.config = auditor_config
 
         mock_create.side_effect = [mock_worker, mock_auditor]

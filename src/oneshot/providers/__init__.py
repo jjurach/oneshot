@@ -315,7 +315,7 @@ class DirectProvider(Provider):
         log_debug(f"Prompt length: {len(prompt)} chars")
 
         # Check if this is an Ollama endpoint (localhost:11434 or similar)
-        if self._is_ollama_.endpoint():
+        if self._is_ollama_endpoint():
             return self._call_ollama(prompt), []  # Ollama client is synchronous, so just call it
         else:
             # Use OpenAI-compatible API
