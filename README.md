@@ -81,6 +81,12 @@ oneshot --verbose "Debug this task"
 
 # Use cline executor instead of claude
 oneshot --executor cline "Task for cline"
+
+# Use direct executor with Ollama
+oneshot --executor direct "What is the capital of France?"
+
+# Use direct executor with custom Ollama model
+oneshot --executor direct --worker-model llama-pro:latest "Explain quantum computing"
 ```
 
 ### Provider Configuration

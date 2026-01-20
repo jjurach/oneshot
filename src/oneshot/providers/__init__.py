@@ -12,13 +12,15 @@ import json
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List
 import os
 
 # Import executors from submodules
 from .base import BaseExecutor, ExecutionResult
 from .aider_executor import AiderExecutor
 from .gemini_executor import GeminiCLIExecutor
+from .direct_executor import DirectExecutor
+from .ollama_client import OllamaClient
 from .logging import ProviderLogger
 from .utils import run_command, map_api_keys
 
@@ -71,12 +73,12 @@ class Provider(ABC):
         self.config = config
 
     @abstractmethod
-    def generate(self, prompt: str, activity_logger=None) -> str:
+    def generate(self, prompt: str, activity_logger=None) -> Tuple[str, List[Any]]:
         """Generate a response synchronously."""
         pass
 
     @abstractmethod
-    async def generate_async(self, prompt: str, activity_logger=None) -> str:
+    async def generate_async(self, prompt: str, activity_logger=None) -> Tuple[str, List[Any]]:
         """Generate a response asynchronously."""
         pass
 
@@ -88,16 +90,16 @@ class Provider(ABC):
 class ExecutorProvider(Provider):
     """Provider that wraps subprocess executor calls (claude, cline) and direct executors (aider, gemini)."""
 
-    def generate(self, prompt: str, activity_logger=None) -> str:
+    def generate(self, prompt: str, activity_logger=None) -> Tuple[str, List[Any]]:
         """Call executor subprocess synchronously."""
         from oneshot.oneshot import call_executor, log_debug
 
         if self.config.executor == "aider":
             log_debug(f"ExecutorProvider calling aider executor")
-            return self._call_aider_executor(prompt)
+            return self._call_aider_executor(prompt), []
         elif self.config.executor == "gemini":
             log_debug(f"ExecutorProvider calling gemini executor")
-            return self._call_gemini_executor(prompt)
+            return self._call_gemini_executor(prompt), []
         else:
             log_debug(f"ExecutorProvider calling {self.config.executor} with model: {self.config.model}")
             return call_executor(
@@ -110,16 +112,16 @@ class ExecutorProvider(Provider):
                 activity_logger=activity_logger
             )
 
-    async def generate_async(self, prompt: str, activity_logger=None) -> str:
+    async def generate_async(self, prompt: str, activity_logger=None) -> Tuple[str, List[Any]]:
         """Call executor subprocess asynchronously."""
         from oneshot.oneshot import call_executor_async, log_debug
 
         if self.config.executor == "aider":
             log_debug(f"ExecutorProvider async calling aider executor")
-            return self._call_aider_executor(prompt)
+            return self._call_aider_executor(prompt), []
         elif self.config.executor == "gemini":
             log_debug(f"ExecutorProvider async calling gemini executor")
-            return self._call_gemini_executor(prompt)
+            return self._call_gemini_executor(prompt), []
         else:
             log_debug(f"ExecutorProvider async calling {self.config.executor} with model: {self.config.model}")
             return await call_executor_async(
@@ -231,13 +233,54 @@ class DirectProvider(Provider):
         except (KeyError, IndexError) as e:
             raise ValueError(f"Invalid API response format: {e}\nResponse: {response_data}")
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, prompt: str, activity_logger=None) -> Tuple[str, List[Any]]:
         """Make synchronous HTTP request to API endpoint."""
         from oneshot.oneshot import log_debug, log_verbose
 
         log_debug(f"DirectProvider calling {self.config.endpoint} with model: {self.config.model}")
         log_debug(f"Prompt length: {len(prompt)} chars")
 
+        # Check if this is an Ollama endpoint (localhost:11434 or similar)
+        if self._is_ollama_endpoint():
+            return self._call_ollama(prompt), []
+        else:
+            # Use OpenAI-compatible API
+            return self._call_openai_compatible(prompt), []
+
+    def _is_ollama_endpoint(self) -> bool:
+        """Check if the endpoint is likely an Ollama server."""
+        return "localhost:11434" in self.config.endpoint or "127.0.0.1:11434" in self.config.endpoint
+
+    def _call_ollama(self, prompt: str) -> str:
+        """Call Ollama API directly."""
+        from oneshot.providers.ollama_client import OllamaClient
+
+        try:
+            # Extract base URL from endpoint
+            if self.config.endpoint.endswith("/v1/chat/completions"):
+                base_url = self.config.endpoint.replace("/v1/chat/completions", "")
+            else:
+                base_url = self.config.endpoint
+
+            client = OllamaClient(base_url=base_url, timeout=self.config.timeout)
+
+            # Generate response
+            response = client.generate(
+                model=self.config.model,
+                prompt=prompt,
+                stream=False
+            )
+
+            if response.done:
+                return response.response
+            else:
+                return "ERROR: Ollama response incomplete"
+
+        except Exception as e:
+            return f"ERROR: Ollama call failed: {e}"
+
+    def _call_openai_compatible(self, prompt: str) -> str:
+        """Call OpenAI-compatible API."""
         payload, headers = self._prepare_request(prompt)
 
         try:
@@ -252,29 +295,34 @@ class DirectProvider(Provider):
             response_data = response.json()
             result = self._extract_response(response_data)
 
-            log_verbose(f"DirectProvider call completed, output length: {len(result)} chars")
             return result
 
         except self._requests.exceptions.Timeout:
             error_msg = f"Request timed out after {self.config.timeout}s"
-            log_debug(f"ERROR: {error_msg}")
             return f"ERROR: {error_msg}"
         except self._requests.exceptions.RequestException as e:
             error_msg = f"HTTP request failed: {e}"
-            log_debug(f"ERROR: {error_msg}")
             return f"ERROR: {error_msg}"
         except Exception as e:
             error_msg = f"Unexpected error: {e}"
-            log_debug(f"ERROR: {error_msg}")
             return f"ERROR: {error_msg}"
 
-    async def generate_async(self, prompt: str) -> str:
+    async def generate_async(self, prompt: str, activity_logger=None) -> Tuple[str, List[Any]]:
         """Make asynchronous HTTP request to API endpoint."""
         from oneshot.oneshot import log_debug, log_verbose
 
         log_debug(f"DirectProvider async calling {self.config.endpoint} with model: {self.config.model}")
         log_debug(f"Prompt length: {len(prompt)} chars")
 
+        # Check if this is an Ollama endpoint (localhost:11434 or similar)
+        if self._is_ollama_.endpoint():
+            return self._call_ollama(prompt), []  # Ollama client is synchronous, so just call it
+        else:
+            # Use OpenAI-compatible API
+            return await self._call_openai_compatible_async(prompt), []
+
+    async def _call_openai_compatible_async(self, prompt: str) -> str:
+        """Call OpenAI-compatible API asynchronously."""
         payload, headers = self._prepare_request(prompt)
 
         try:
@@ -289,20 +337,16 @@ class DirectProvider(Provider):
                 response_data = response.json()
                 result = self._extract_response(response_data)
 
-                log_verbose(f"DirectProvider async call completed, output length: {len(result)} chars")
                 return result
 
         except self._httpx.TimeoutException:
             error_msg = f"Request timed out after {self.config.timeout}s"
-            log_debug(f"ERROR: {error_msg}")
             return f"ERROR: {error_msg}"
         except self._httpx.HTTPStatusError as e:
             error_msg = f"HTTP error: {e.response.status_code} {e.response.text}"
-            log_debug(f"ERROR: {error_msg}")
             return f"ERROR: {error_msg}"
         except Exception as e:
             error_msg = f"Unexpected error: {e}"
-            log_debug(f"ERROR: {error_msg}")
             return f"ERROR: {error_msg}"
 
 
@@ -356,6 +400,8 @@ __all__ = [
     'ExecutionResult',
     'AiderExecutor',
     'GeminiCLIExecutor',
+    'DirectExecutor',
+    'OllamaClient',
     'ProviderLogger',
     'ProviderConfig',
     'Provider',

@@ -118,6 +118,7 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
         # Allocate master and slave PTY file descriptors
         master_fd, slave_fd = pty.openpty()
         log_debug(f"PTY allocated: master={master_fd}, slave={slave_fd}")
+        log_debug(f"[PTY CONFIG] buffer_size={buffer_size} bytes, accumulation_buffer_size={accumulation_buffer_size} bytes")
 
         stdout_data = []
         stderr_data = []
@@ -197,7 +198,9 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
 
                                     # Minimal logging for streaming chunks (only in debug mode)
                                     if VERBOSITY >= 2:
-                                        log_debug(f"[Chunk #{chunk_count}] {len(data)} bytes received")
+                                        preview = chunk_text[:100].replace('\n', '\\n')
+                                        log_debug(f"[PTY CHUNK] #{chunk_count}: {len(data)} bytes, accumulated: {buffer_total_bytes}/{accumulation_buffer_size} bytes")
+                                        log_debug(f"[PTY CHUNK] Preview: {preview}{'...' if len(chunk_text) > 100 else ''}")
 
                                     # Check if we should flush the accumulation buffer
                                     should_flush = False
@@ -205,11 +208,13 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                                     # Flush on accumulation buffer size limit
                                     if buffer_total_bytes >= accumulation_buffer_size:
                                         should_flush = True
-                                        flush_reason = f"buffer size limit ({accumulation_buffer_size} chars)"
+                                        flush_reason = f"size limit reached ({buffer_total_bytes} >= {accumulation_buffer_size} bytes)"
+                                        log_debug(f"[PTY FLUSH TRIGGER] {flush_reason}")
                                     # Flush on complete lines (good boundary for text output)
                                     elif '\n' in chunk_text and buffer_total_bytes > 100:
                                         should_flush = True
                                         flush_reason = "line boundary detected"
+                                        log_debug(f"[PTY FLUSH TRIGGER] {flush_reason} (buffer: {buffer_total_bytes} bytes)")
                                     # Flush on JSON object boundaries (for structured output)
                                     elif ('}' in chunk_text or '{' in chunk_text) and buffer_total_bytes > 50:
                                         # Check if we have a complete JSON object
@@ -218,6 +223,7 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                                             json.loads(accumulated_text.strip())
                                             should_flush = True
                                             flush_reason = "complete JSON object detected"
+                                            log_debug(f"[PTY FLUSH TRIGGER] {flush_reason}")
                                         except json.JSONDecodeError:
                                             # Check for multiple JSON objects
                                             lines = accumulated_text.split('\n')
@@ -233,10 +239,15 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                                             if complete_objects > 0:
                                                 should_flush = True
                                                 flush_reason = f"{complete_objects} complete JSON line(s) detected"
+                                                log_debug(f"[PTY FLUSH TRIGGER] {flush_reason}")
 
                                     if should_flush:
                                         accumulated_text = ''.join(accumulation_buffer)
+                                        preview = accumulated_text[:200].replace('\n', '\\n')
+                                        log_debug(f"[PTY FLUSH] Reason: {flush_reason}")
+                                        log_debug(f"[PTY FLUSH] Content: {len(accumulated_text)} bytes → {preview}{'...' if len(accumulated_text) > 200 else ''}")
                                         stdout_data.append(accumulated_text)
+                                        log_debug(f"[PTY STDOUT] Total accumulated so far: {sum(len(s) for s in stdout_data)} bytes")
                                         # Remove verbose accumulation logging that was causing noise
                                         accumulation_buffer = []
                                         buffer_total_bytes = 0
@@ -613,56 +624,47 @@ def contains_completion_indicators(text):
     return False
 
 
-def truncate_worker_output_for_auditor(output: str, max_bytes: int = 2048) -> str:
+def select_activities_for_auditor(
+    activities: List[Any], max_events: int = 5, max_bytes: int = 4096
+) -> str:
     """
-    Truncate worker output for inclusion in auditor prompts.
-
-    Logic:
-    - If output contains valid JSON that appears to be a completion message, return the entire JSON object
-    - Otherwise, return the last N bytes (2048 default) of output
-    - Ensure proper character boundaries (don't split multi-byte UTF-8 characters)
+    Select relevant activities for the auditor, filtering out noise.
 
     Args:
-        output: The worker output to truncate
-        max_bytes: Maximum bytes to return (default 2048)
+        activities: List of activity events from the interpreter.
+        max_events: The maximum number of recent events to consider.
+        max_bytes: Maximum total size of the output string.
 
     Returns:
-        Truncated output string
+        A string containing the selected activities' descriptions.
     """
-    if not output:
+    if not activities:
         return ""
 
-    # First, check if the output contains valid JSON that looks like a completion message
-    try:
-        # Try to extract JSON from the output
-        extracted_json = extract_json(output)
-        if extracted_json:
-            # Check if the extracted JSON contains completion indicators
-            if contains_completion_indicators(extracted_json):
-                # Return the complete JSON object if it appears to be a completion message
-                return extracted_json
-    except Exception:
-        pass
+    # Filter out less important activities like planning and thinking
+    relevant_activities = [
+        activity
+        for activity in activities
+        if activity.activity_type
+        not in [ActivityType.PLANNING, ActivityType.THINKING, ActivityType.STATUS]
+    ]
 
-    # If no valid completion JSON found, return the last N bytes
-    output_bytes = output.encode('utf-8', errors='replace')
+    # If no relevant activities are found, fall back to all activities
+    if not relevant_activities:
+        relevant_activities = activities
 
-    if len(output_bytes) <= max_bytes:
-        return output
+    # Get the last `max_events` of the relevant activities
+    recent_activities = relevant_activities[-max_events:]
 
-    # Take the last max_bytes, but ensure we don't split multi-byte UTF-8 characters
-    truncated_bytes = output_bytes[-max_bytes:]
+    # Combine their descriptions into a single string
+    output = "\n".join([a.description for a in recent_activities])
 
-    # Find a safe UTF-8 boundary by looking for the start of a valid UTF-8 sequence
-    # Walk backwards until we find a byte that could be the start of a UTF-8 character
-    for i in range(len(truncated_bytes) - 1, -1, -1):
-        byte = truncated_bytes[i]
-        # Check if this byte is the start of a UTF-8 sequence (0xxxxxxx or 11xxxxxx)
-        if (byte & 0x80) == 0 or (byte & 0xC0) == 0xC0:
-            truncated_bytes = truncated_bytes[i:]
-            break
-
-    return truncated_bytes.decode('utf-8', errors='replace')
+    # Truncate to max_bytes to be safe
+    if len(output.encode("utf-8")) > max_bytes:
+        # A simple truncation for now
+        return output[-max_bytes:]
+    
+    return output
 
 
 def extract_lenient_json(text):
@@ -895,7 +897,7 @@ async def _emit_activities(activities: List[Any], executor_name: str, task_id: O
         log_debug(f"Error emitting executor activities: {e}")
 
 
-def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30, activity_logger=None):
+def call_executor(prompt, model, executor="claude", initial_timeout=300, max_timeout=3600, activity_interval=30, activity_logger=None) -> Tuple[str, List[Any]]:
     """
     Call executor (claude or cline) with streaming output and adaptive timeout.
 
@@ -909,7 +911,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
 
         # Build command
         if executor == "cline":
-            cmd = ['cline', '--yolo', '--no-interactive', '--output-format', 'json', '--oneshot', prompt]
+            cmd = ['cline', '--yolo', '--mode', 'act', '--no-interactive', '--output-format', 'json', '--oneshot', prompt]
         else:  # claude
             cmd = ['claude', '-p', '--output-format', 'stream-json', '--verbose']
             if model:
@@ -936,7 +938,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
                 filtered_output, activities = _process_executor_output(stdout, executor, task_id=None, activity_logger=activity_logger)
                 if activities:
                     log_debug(f"Extracted {len(activities)} activity events from executor output")
-                return filtered_output
+                return filtered_output, activities
             except (OSError, subprocess.TimeoutExpired) as e:
                 log_debug(f"PTY execution failed, falling back to buffered: {e}")
                 # Fall through to buffered execution
@@ -968,7 +970,7 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
         filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None, activity_logger=activity_logger)
         if activities:
             log_debug(f"Extracted {len(activities)} activity events from executor output")
-        return filtered_output
+        return filtered_output, activities
 
     except subprocess.TimeoutExpired:
         log_info(f"Initial timeout ({initial_timeout}s) exceeded, checking for activity...")
@@ -976,13 +978,13 @@ def call_executor(prompt, model, executor="claude", initial_timeout=300, max_tim
 
     except Exception as e:
         log_info(f"ERROR: {e}")
-        return f"ERROR: {e}"
+        return f"ERROR: {e}", []
 
 
 
 async def call_executor_async(prompt: str, model: Optional[str], executor: str = "claude",
                             initial_timeout: float = 300, max_timeout: float = 3600,
-                            activity_interval: float = 30, activity_logger=None) -> str:
+                            activity_interval: float = 30, activity_logger=None) -> Tuple[str, List[Any]]:
     """
     Async version of call_executor using OneshotTask for better process management.
 
@@ -1042,18 +1044,18 @@ async def call_executor_async(prompt: str, model: Optional[str], executor: str =
             filtered_output, activities = _process_executor_output(result.output, executor, task_id=None, activity_logger=activity_logger)
             if activities:
                 log_debug(f"Extracted {len(activities)} activity events from async executor output")
-            return filtered_output
+            return filtered_output, activities
         else:
             error_msg = result.error or f"Task failed with exit code {result.exit_code}"
             log_info(f"ERROR: Async {executor} call failed: {error_msg}")
-            return f"ERROR: {error_msg}"
+            return f"ERROR: {error_msg}", []
 
     except Exception as e:
         log_info(f"ERROR in async executor: {e}")
-        return f"ERROR: {e}"
+        return f"ERROR: {e}", []
 
 
-def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval, activity_logger=None):
+def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interval, activity_logger=None) -> Tuple[str, List[Any]]:
     """
     Adaptive timeout with activity monitoring for long-running tasks.
 
@@ -1123,7 +1125,7 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
                 filtered_output, activities = _process_executor_output(stdout, executor, task_id=None, activity_logger=activity_logger)
                 if activities:
                     log_debug(f"Extracted {len(activities)} activity events from adaptive PTY output")
-                return filtered_output
+                return filtered_output, activities
             except (OSError, subprocess.TimeoutExpired) as e:
                 log_debug(f"PTY adaptive execution failed, falling back to buffered: {e}")
                 # Fall through to buffered execution
@@ -1162,14 +1164,14 @@ def call_executor_adaptive(prompt, model, executor, max_timeout, activity_interv
         filtered_output, activities = _process_executor_output(result.stdout, executor, task_id=None, activity_logger=activity_logger)
         if activities:
             log_debug(f"Extracted {len(activities)} activity events from adaptive buffered output")
-        return filtered_output
+        return filtered_output, activities
 
     except subprocess.TimeoutExpired:
         log_info(f"ERROR: {executor} call timed out after {max_timeout}s (max timeout reached)")
-        return f"ERROR: {executor} call timed out after {max_timeout}s (max timeout reached)"
+        return f"ERROR: {executor} call timed out after {max_timeout}s (max timeout reached)", []
     except Exception as e:
         log_info(f"ERROR in adaptive timeout: {e}")
-        return f"ERROR: {e}"
+        return f"ERROR: {e}", []
 
 
 
@@ -1340,16 +1342,30 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
                 # Use reworker prompt for iterations 2+
                 full_prompt = get_reworker_prompt(worker_prompt_header) + "\n\n" + prompt + "\n\n" + last_auditor_feedback
                 log_verbose("Using reworker prompt for iteration > 1")
+                prompt_type = "reworker_prompt"
             else:
                 # Use worker prompt for initial iteration
                 full_prompt = get_worker_prompt(worker_prompt_header) + "\n\n" + prompt
                 log_verbose("Using worker prompt for initial iteration")
+                prompt_type = "worker_prompt"
 
             log_debug(f"Full prompt length: {len(full_prompt)} chars")
+            log_debug(f"[WORKER INPUT] Iteration {iteration}: Using {prompt_type}")
+            log_debug(f"[WORKER INPUT] Prompt length: {len(full_prompt)} chars")
+            preview = full_prompt[:300].replace('\n', '\\n')
+            log_debug(f"[WORKER INPUT] Preview: {preview}{'...' if len(full_prompt) > 300 else ''}")
             dump_buffer("Worker Prompt", full_prompt, max_lines=10)
 
             log_verbose(f"Calling worker provider")
-            worker_output = worker_provider.generate(full_prompt, activity_logger)
+            worker_output, worker_activities = worker_provider.generate(full_prompt, activity_logger)
+
+            # Enhanced debugging for worker output
+            log_debug(f"[WORKER OUTPUT] Raw output received: {len(worker_output)} bytes")
+            preview = worker_output[:300].replace('\n', '\\n')
+            log_debug(f"[WORKER OUTPUT] Preview: {preview}{'...' if len(worker_output) > 300 else ''}")
+            activity_types = [a.activity_type.value if hasattr(a, 'activity_type') else str(a) for a in worker_activities[:5]]
+            log_debug(f"[WORKER ACTIVITIES] Extracted {len(worker_activities)} activities: {activity_types}")
+
             dump_buffer("Worker Output", worker_output)
             print(worker_output)
 
@@ -1389,12 +1405,20 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
             # Extract JSON from worker output using lenient parsing
             worker_json, extraction_method = extract_lenient_json(worker_output)
             log_info(f"JSON extraction method: {extraction_method}")
+
+            # Enhanced debugging for JSON extraction
+            log_debug(f"[JSON EXTRACT] Method: {extraction_method}")
+            log_debug(f"[JSON EXTRACT] Success: {bool(worker_json)}")
+            if worker_json:
+                preview = worker_json[:300].replace('\n', '\\n')
+                log_debug(f"[JSON EXTRACT] Preview: {preview}{'...' if len(worker_json) > 300 else ''}")
             dump_buffer("Extracted Worker JSON", worker_json or "NO JSON FOUND", max_lines=15)
 
             if not worker_json:
                 print(f"❌ No acceptable response found in worker output (method: {extraction_method})")
                 print("Worker said:", worker_output.split('\n')[:5])
                 log_info(f"No acceptable response extracted (method: {extraction_method}), skipping auditor")
+                log_debug(f"[JSON EXTRACT] Skipping auditor: no acceptable response extracted")
                 iteration += 1
                 time.sleep(ITERATION_SLEEP)
                 continue
@@ -1403,17 +1427,48 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
             log_verbose(f"Preparing auditor prompt (extraction method: {extraction_method})")
 
             # Truncate worker output for auditor prompt (final 2KB or complete JSON if present)
-            truncated_worker_output = truncate_worker_output_for_auditor(worker_output)
+            log_debug(f"Filtering {len(worker_activities)} activities for auditor")
+
+            # Enhanced debugging for activity filtering
+            activity_types = [a.activity_type.value if hasattr(a, 'activity_type') else str(a) for a in worker_activities]
+            log_debug(f"[AUDITOR ACTIVITIES] Before filtering: {len(worker_activities)} activities")
+            log_debug(f"[AUDITOR ACTIVITIES] Types: {activity_types[:10]}")
+
+            truncated_worker_output = select_activities_for_auditor(worker_activities)
+
+            # Count activities in filtered output
+            filtered_count = len([a for a in worker_activities if a.activity_type not in [ActivityType.PLANNING, ActivityType.THINKING, ActivityType.STATUS]])
+            if not filtered_count or filtered_count == 0:
+                filtered_count = len(worker_activities)
+            log_debug(f"[AUDITOR ACTIVITIES] After filtering: {filtered_count} activities retained")
+            log_debug(f"[AUDITOR ACTIVITIES] Size: {len(truncated_worker_output)} bytes")
 
             if extraction_method == "strict":
                 audit_input = f"Original Task: {prompt}\n\nEvaluate this valid JSON response:\n\n{truncated_worker_output}"
             else:
                 audit_input = f"Original Task: {prompt}\n\nEvaluate this response (parsed with {extraction_method} method):\n\n{truncated_worker_output}\n\nParsed as: {worker_json}"
+
             full_auditor_prompt = get_auditor_prompt(auditor_prompt_header) + "\n\n" + audit_input
             log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
 
+            # Enhanced debugging for auditor input
+            log_debug(f"[AUDITOR INPUT] Iteration {iteration}: Using auditor_prompt")
+            log_debug(f"[AUDITOR INPUT] Auditor model: {auditor_provider.model if hasattr(auditor_provider, 'model') else 'unknown'}")
+            log_debug(f"[AUDITOR INPUT] Activities to evaluate: {len(filtered_lines)} activities, {len(truncated_worker_output)} bytes")
+            log_debug(f"[AUDITOR INPUT] Prompt length: {len(full_auditor_prompt)} chars")
+            preview = full_auditor_prompt[:300].replace('\n', '\\n')
+            log_debug(f"[AUDITOR INPUT] Preview: {preview}{'...' if len(full_auditor_prompt) > 300 else ''}")
+            feedback_str = "included" if last_auditor_feedback else "none"
+            log_debug(f"[AUDITOR INPUT] Feedback from previous iteration: {feedback_str}")
+
             log_verbose(f"Calling auditor provider")
-            audit_response = auditor_provider.generate(full_auditor_prompt, activity_logger)
+            audit_response, _ = auditor_provider.generate(full_auditor_prompt, activity_logger)
+
+            # Enhanced debugging for auditor output
+            log_debug(f"[AUDITOR OUTPUT] Raw output received: {len(audit_response)} bytes")
+            preview = audit_response[:300].replace('\n', '\\n')
+            log_debug(f"[AUDITOR OUTPUT] Preview: {preview}{'...' if len(audit_response) > 300 else ''}")
+
             dump_buffer("Auditor Response", audit_response)
 
             # Log auditor response to session file
@@ -1438,7 +1493,11 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
             # Extract verdict from auditor response using lenient parsing
             log_verbose("Extracting verdict from auditor response (lenient parsing)")
             verdict, reason, advice = parse_lenient_verdict(audit_response)
-            log_debug(f"Parsed verdict: {verdict}, reason: {reason}, advice: {advice}")
+
+            # Enhanced debugging for verdict parsing
+            log_debug(f"[VERDICT] Parsed verdict: {verdict}")
+            log_debug(f"[VERDICT] Reason: {reason if reason else '(none)'}")
+            log_debug(f"[VERDICT] Advice: {advice if advice else '(none)'}")
 
             # Also try to extract JSON for backward compatibility and logging
             auditor_json = extract_json(audit_response)
@@ -1495,6 +1554,19 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
                 if auditor_json:
                     print(f"Auditor JSON: {auditor_json}")
                 print("Continuing anyway...")
+
+            # Data flow confirmation debugging
+            log_debug(f"[ITERATION {iteration}] Complete")
+            log_debug(f"[ITERATION {iteration}] Worker: {len(full_prompt)} bytes input → {len(worker_output)} bytes output")
+            log_debug(f"[ITERATION {iteration}] Extraction: method={extraction_method}, success={bool(worker_json)}")
+            log_debug(f"[ITERATION {iteration}] Auditor: {len(full_auditor_prompt)} bytes input → {len(audit_response)} bytes output")
+            log_debug(f"[ITERATION {iteration}] Verdict: {verdict}")
+            if verdict and verdict.upper() == "DONE":
+                log_debug(f"[ITERATION {iteration}] Decision: Returning success=true")
+            elif verdict and verdict.upper() == "REITERATE":
+                log_debug(f"[ITERATION {iteration}] Decision: Looping with reworker prompt")
+            else:
+                log_debug(f"[ITERATION {iteration}] Decision: Continuing to next iteration")
 
         iteration += 1
         time.sleep(ITERATION_SLEEP)
@@ -1591,7 +1663,7 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
             log_verbose(f"Calling worker provider asynchronously")
 
             # Use async provider
-            worker_output = await worker_provider.generate_async(full_prompt)
+            worker_output, worker_activities = await worker_provider.generate_async(full_prompt)
             dump_buffer("Worker Output", worker_output)
             print(worker_output)
 
@@ -1636,7 +1708,7 @@ async def run_oneshot_async(prompt, worker_provider, auditor_provider, max_itera
             log_debug(f"Full auditor prompt length: {len(full_auditor_prompt)} chars")
 
             log_verbose(f"Calling auditor provider asynchronously")
-            audit_response = await auditor_provider.generate_async(full_auditor_prompt)
+            audit_response, _ = await auditor_provider.generate_async(full_auditor_prompt)
             dump_buffer("Auditor Response", audit_response)
 
             # Log auditor response
@@ -1736,20 +1808,36 @@ def run_oneshot_legacy(prompt, worker_model, auditor_model, max_iterations, exec
     from .providers import ProviderConfig, create_provider
 
     # Create worker provider config
-    worker_config = ProviderConfig(
-        provider_type='executor',
-        executor=executor,
-        model=worker_model,
-        timeout=initial_timeout
-    )
+    if executor == "direct":
+        worker_config = ProviderConfig(
+            provider_type='direct',
+            endpoint="http://localhost:11434",  # Default Ollama endpoint
+            model=worker_model or "llama-pro:latest",
+            timeout=initial_timeout
+        )
+    else:
+        worker_config = ProviderConfig(
+            provider_type='executor',
+            executor=executor,
+            model=worker_model,
+            timeout=initial_timeout
+        )
 
     # Create auditor provider config
-    auditor_config = ProviderConfig(
-        provider_type='executor',
-        executor=executor,
-        model=auditor_model,
-        timeout=initial_timeout
-    )
+    if executor == "direct":
+        auditor_config = ProviderConfig(
+            provider_type='direct',
+            endpoint="http://localhost:11434",  # Default Ollama endpoint
+            model=auditor_model or "llama-pro:latest",
+            timeout=initial_timeout
+        )
+    else:
+        auditor_config = ProviderConfig(
+            provider_type='executor',
+            executor=executor,
+            model=auditor_model,
+            timeout=initial_timeout
+        )
 
     # Create provider instances
     worker_provider = create_provider(worker_config)
@@ -1931,9 +2019,9 @@ Configuration:
 
     parser.add_argument(
         '--executor',
-        default=config['executor'],
-        choices=['claude', 'cline', 'aider', 'gemini'],
-        help=f'Which executor to use: claude, cline, aider, or gemini (default: {config["executor"]})'
+        default='cline',
+        choices=['claude', 'cline', 'aider', 'gemini', 'direct'],
+        help=f'Which executor to use: claude, cline, aider, gemini, or direct (default: cline)'
     )
 
     parser.add_argument(
@@ -1991,6 +2079,15 @@ Configuration:
             sys.exit(1)
         args.worker_model = None
         args.auditor_model = None
+    elif args.executor == "direct":
+        # Direct executor uses Ollama models
+        default_worker = "llama-pro:latest"
+        default_auditor = "llama-pro:latest"
+
+        if args.worker_model is None:
+            args.worker_model = default_worker
+        if args.auditor_model is None:
+            args.auditor_model = default_auditor
     else:  # claude
         default_worker = "claude-3-5-haiku-20241022"
         default_auditor = "claude-3-5-haiku-20241022"

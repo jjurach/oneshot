@@ -9,9 +9,10 @@ async def main_async():
     """Async version of main function."""
     # Import here to avoid circular imports
     import argparse
+    import oneshot.oneshot as oneshot_module
     from oneshot.oneshot import (
         DEFAULT_WORKER_MODEL, DEFAULT_AUDITOR_MODEL, DEFAULT_MAX_ITERATIONS,
-        VERBOSITY, log_debug, log_verbose, log_info, find_latest_session, SESSION_DIR,
+        log_debug, log_verbose, log_info, find_latest_session, SESSION_DIR,
         count_iterations
     )
     from oneshot.config import get_global_config, apply_executor_defaults
@@ -127,8 +128,8 @@ Configuration:
     parser.add_argument(
         '--executor',
         default=config['executor'],
-        choices=['claude', 'cline', 'aider', 'gemini'],
-        help=f'Which executor to use: claude, cline, aider, or gemini (default: {config["executor"]})'
+        choices=['claude', 'cline', 'aider', 'gemini', 'direct'],
+        help=f'Which executor to use: claude, cline, aider, gemini, or direct (default: {config["executor"]})'
     )
 
     parser.add_argument(
@@ -376,18 +377,23 @@ Configuration:
             # Aider executor uses built-in models, no model selection needed via CLI
             args.worker_model = None
             args.auditor_model = None
+        elif args.executor == "direct":
+            # Direct executor uses Ollama, set default model if not specified
+            if not args.worker_model:
+                args.worker_model = "llama-pro:latest"
+            if not args.auditor_model:
+                args.auditor_model = "llama-pro:latest"
         # For claude executor, use its own default model selection (don't force a model)
 
-    # Set global verbosity level
-    global VERBOSITY
+    # Set global verbosity level in the oneshot module
     if args.debug:
-        VERBOSITY = 2
-        log_debug("Debug mode enabled")
+        oneshot_module.VERBOSITY = 2
+        oneshot_module.log_debug("Debug mode enabled")
     elif args.verbose:
-        VERBOSITY = 1
-        log_verbose("Verbose mode enabled")
+        oneshot_module.VERBOSITY = 1
+        oneshot_module.log_verbose("Verbose mode enabled")
     else:
-        VERBOSITY = 0
+        oneshot_module.VERBOSITY = 0
 
     # Validate prompt
     if not args.prompt:

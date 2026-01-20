@@ -286,12 +286,13 @@ class TestDirectProvider:
 
     def test_direct_provider_generate_success(self):
         """Test successful HTTP request."""
-        with patch('requests.post') as mock_post:
+        with patch('oneshot.providers.ollama_client.OllamaClient') as mock_client_class:
+            mock_client = Mock()
             mock_response = Mock()
-            mock_response.json.return_value = {
-                "choices": [{"message": {"content": "Test response"}}]
-            }
-            mock_post.return_value = mock_response
+            mock_response.response = "Test response"
+            mock_response.done = True
+            mock_client.generate.return_value = mock_response
+            mock_client_class.return_value = mock_client
 
             config = ProviderConfig(
                 provider_type="direct",
@@ -304,13 +305,18 @@ class TestDirectProvider:
             result = provider.generate("Test prompt")
 
             assert result == "Test response"
-            mock_post.assert_called_once()
+            mock_client.generate.assert_called_once_with(
+                model="qwen3-8b-coding",
+                prompt="Test prompt",
+                stream=False
+            )
 
     def test_direct_provider_generate_timeout(self):
         """Test timeout handling."""
-        with patch('requests.post') as mock_post:
-            import requests
-            mock_post.side_effect = requests.exceptions.Timeout()
+        with patch('oneshot.providers.ollama_client.OllamaClient') as mock_client_class:
+            mock_client = Mock()
+            mock_client.generate.side_effect = Exception("Connection timeout")
+            mock_client_class.return_value = mock_client
 
             config = ProviderConfig(
                 provider_type="direct",
@@ -323,7 +329,7 @@ class TestDirectProvider:
             result = provider.generate("Test prompt")
 
             assert "ERROR" in result
-            assert "timed out" in result
+            assert "Ollama call failed" in result
 
     @pytest.mark.asyncio
     async def test_direct_provider_generate_async_success(self):
@@ -340,8 +346,8 @@ class TestDirectProvider:
 
             config = ProviderConfig(
                 provider_type="direct",
-                endpoint="http://localhost:11434/v1/chat/completions",
-                model="qwen3-8b-coding",
+                endpoint="https://api.openai.com/v1/chat/completions",  # Non-Ollama endpoint
+                model="gpt-4",
                 timeout=300
             )
             provider = DirectProvider(config)

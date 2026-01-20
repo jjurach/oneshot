@@ -39,15 +39,18 @@ class TestRunOneshot:
         """Test max iterations reached."""
         mock_count.return_value = 0
 
-        # Always return REITERATE verdict
-        mock_call.side_effect = [
-            '{"result": "Success"}',
-            '{"verdict": "REITERATE", "reason": "Try again"}',
-            '{"result": "Success"}',
-            '{"verdict": "REITERATE", "reason": "Try again"}',
-            '{"result": "Success"}',
-            '{"verdict": "REITERATE", "reason": "Try again"}',
-        ]
+        # Create a generator that cycles through responses to avoid StopIteration
+        def response_generator():
+            responses = [
+                '{"result": "Success"}',
+                '{"verdict": "REITERATE", "reason": "Try again"}',
+            ]
+            i = 0
+            while True:
+                yield responses[i % len(responses)]
+                i += 1
+
+        mock_call.side_effect = response_generator()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             success = run_oneshot(
