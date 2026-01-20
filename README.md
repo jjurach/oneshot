@@ -296,6 +296,64 @@ All interactions are logged to timestamped markdown files in the current directo
   - `httpx` library (for asynchronous HTTP calls)
   - Access to an OpenAI-compatible API endpoint (e.g., Ollama, OpenAI, etc.)
 
+## Demo Scripts and Examples
+
+The `examples/` directory contains demo scripts showcasing various executor types and features:
+
+### Activity Formatter Demo
+
+Demonstrates the activity interpretation and formatting pipeline for processing NDJSON activity data:
+
+```bash
+python examples/demo_activity_formatter.py
+```
+
+**What it shows:**
+- Reading and parsing NDJSON activity data
+- Extracting meaningful activities from raw output
+- Formatting activities for display
+- Sensitive data filtering
+
+### Gemini Executor Demo
+
+Showcases Google Gemini executor functionality with different output formats and approval modes:
+
+```bash
+python examples/demo_gemini_executor.py
+```
+
+**Features demonstrated:**
+- Gemini executor instantiation and configuration
+- Output format options (json vs stream-json)
+- Approval modes (normal vs auto-approve/yolo)
+- Session logging capabilities
+
+### Direct Executor Demo
+
+Demonstrates direct executor functionality for querying local models via Ollama:
+
+```bash
+python examples/demo_direct_executor.py
+```
+
+**What it shows:**
+- DirectExecutor instantiation
+- Ollama client connection validation
+- Simple query execution
+- Model availability checking
+
+### Running All Demos
+
+Run all demo scripts in sequence:
+
+```bash
+for script in examples/demo_*.py; do
+  echo "Running $script..."
+  python "$script"
+  echo "---"
+done
+```
+
 ## Development
 
 ### Running Tests

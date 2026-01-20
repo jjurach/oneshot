@@ -219,11 +219,19 @@ class TestDemoScript:
     def test_demo_script_imports(self):
         """Test that the demo script can be imported without errors."""
         # This verifies the demo script has valid Python syntax
+        import sys
+        import os
+        examples_dir = os.path.join(os.path.dirname(__file__), '..', 'examples')
+        sys.path.insert(0, examples_dir)
         import demo_gemini_executor
         assert demo_gemini_executor.GeminiExecutorDemo is not None
 
     def test_demo_class_initialization(self):
         """Test GeminiExecutorDemo class initialization."""
+        import sys
+        import os
+        examples_dir = os.path.join(os.path.dirname(__file__), '..', 'examples')
+        sys.path.insert(0, examples_dir)
         import demo_gemini_executor
         demo = demo_gemini_executor.GeminiExecutorDemo()
         assert demo.custom_task is not None
@@ -240,6 +248,10 @@ class TestDemoScript:
 
     def test_demo_class_custom_task(self):
         """Test GeminiExecutorDemo with custom task."""
+        import sys
+        import os
+        examples_dir = os.path.join(os.path.dirname(__file__), '..', 'examples')
+        sys.path.insert(0, examples_dir)
         import demo_gemini_executor
         custom_task = "Write a hello world program"
         demo = demo_gemini_executor.GeminiExecutorDemo(custom_task)

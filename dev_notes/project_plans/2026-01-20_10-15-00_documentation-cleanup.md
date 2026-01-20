@@ -1,6 +1,8 @@
 # Project Plan: Documentation Cleanup & Validation for Executor Abstraction
 
-**Related Request**: `dev_notes/requests/prompt-12.md`
+**Related Requests**:
+- `dev_notes/requests/prompt-12.md` (Initial cleanup request)
+- `dev_notes/requests/prompt-13.md` (Demo scripts and directory restructuring)
 
 ---
 
@@ -86,19 +88,58 @@ For **each of the following executors** (cline, claude, aider, gemini, direct):
    - [ ] Address obvious bugs or failures
    - [ ] Re-test after fixes
 
-### Phase 4: README.md Update
+### Phase 4: Demo Script Reorganization & Consolidation
 
-1. **Review current README.md**
-   - [ ] Check for demo script instructions
-   - [ ] Identify gaps in documentation
+1. **Inventory all demo scripts**
+   - [ ] Run `ls *demo*py` to identify all Python demo scripts
+   - [ ] Run `ls *demo*sh` to identify all shell demo scripts
+   - [ ] Document current location and naming patterns
+   - [ ] Document purpose and supported executors for each script
 
-2. **Update README.md**
-   - [ ] Add/update instructions for all demo scripts
+2. **Create examples/ directory structure**
+   - [ ] Create new `examples/` directory in project root
+   - [ ] Plan subdirectories if needed (e.g., `examples/executor/`, `examples/basic/`)
+
+3. **Standardize demo script naming & usage**
+   - [ ] Review scripts for consistency in naming patterns
+   - [ ] Identify scripts serving similar purposes
+   - [ ] Rename scripts for consistency (if similar purpose → similar name)
+   - [ ] Review script arguments/flags for consistency
+   - [ ] Ensure help text/usage information is clear and present
+
+4. **Move demo scripts to examples/ directory**
+   - [ ] Move all `demo_*.py` files to `examples/`
+   - [ ] Move all `demo_*.sh` files to `examples/`
+   - [ ] Update any import paths or hardcoded paths in scripts if needed
+   - [ ] Verify scripts still execute correctly from new location
+
+5. **Test all scripts in new location**
+   - [ ] Run each script to verify it works from `examples/` directory
+   - [ ] If scripts accept executor options: test with supported executors
+   - [ ] Document any failures found during testing
+
+### Phase 5: Documentation References Update
+
+1. **Update README.md**
+   - [ ] Check current README.md for demo script instructions
+   - [ ] Add/update instructions for all moved demo scripts
+   - [ ] Update paths to reflect `examples/` directory
    - [ ] Document executor options if applicable
    - [ ] Ensure clarity for new developers
-   - [ ] Reflect any script changes from Phase 3
+   - [ ] Provide clear usage examples for each script category
 
-### Phase 5: Validation & Verification
+2. **Update docs/ directory references**
+   - [ ] Search all `.md` files in `docs/` for demo script references
+   - [ ] Update paths to new `examples/` locations
+   - [ ] Update any instructions that reference old locations
+   - [ ] Verify hyperlinks and path references are correct
+
+3. **Check for hardcoded references in code**
+   - [ ] Search codebase for hardcoded demo script paths
+   - [ ] Update any Python/code references to demo scripts
+   - [ ] Verify CI/CD or test scripts don't reference old locations
+
+### Phase 6: Validation & Verification
 
 1. **Verify documentation consistency**
    - [ ] All executor references aligned with implementation
@@ -124,33 +165,64 @@ For **each of the following executors** (cline, claude, aider, gemini, direct):
 - [ ] All five executors consistently represented across docs
 - [ ] Direct executor is explicitly documented and listed everywhere
 
-✅ **Demo Scripts**:
-- [ ] All demo scripts execute without errors
-- [ ] All executor-specific variants tested and working
-- [ ] Any bugs discovered and fixed
+✅ **Demo Scripts - Organization**:
+- [ ] All demo scripts moved to `examples/` directory
+- [ ] Demo scripts renamed for consistency (similar purposes = similar names)
+- [ ] Usage patterns standardized across scripts
+- [ ] All scripts include clear help text and usage information
 
-✅ **README.md**:
-- [ ] Complete instructions for running all demo scripts
-- [ ] Executor options clearly documented
-- [ ] New developers can understand how to use scripts
+✅ **Demo Scripts - Functionality**:
+- [ ] All demo scripts execute without errors from new location
+- [ ] All executor-specific variants tested and working
+- [ ] Any bugs discovered during reorganization and fixed
+- [ ] Scripts properly handle paths from new `examples/` directory
+
+✅ **Documentation References**:
+- [ ] README.md updated with complete demo script instructions
+- [ ] All docs/ references updated to point to `examples/` directory
+- [ ] Executor options clearly documented for each script
+- [ ] No stale references to old demo script locations remain
+- [ ] Codebase search confirms no hardcoded references to old paths
+
+✅ **Overall**:
+- [ ] New developers can understand project structure and run demos
+- [ ] All documentation aligns with reorganized demo script locations
+- [ ] Project is ready for commit with all changes documented
 
 ---
 
 ## Testing Strategy
 
 1. **Documentation Verification**:
-   - Grep searches to verify all references
+   - Grep searches to verify all executor references
    - Manual review of key documentation files
    - Spot-check for completeness of executor lists
+   - Verify all five executors mentioned consistently
 
-2. **Demo Script Testing**:
-   - Execute each script at least once
+2. **Demo Script Organization Testing**:
+   - Verify `examples/` directory created and structured properly
+   - Confirm all scripts moved from project root to `examples/`
+   - Verify scripts have consistent naming patterns
+   - Check for clear usage/help information in each script
+
+3. **Demo Script Functionality Testing**:
+   - Execute each script from new `examples/` location
    - For executor-parameterized scripts: test with each executor option
-   - Verify scripts run without errors
+   - Verify scripts handle relative/absolute paths correctly
+   - Document any failures and verify fixes work
+   - Verify no import errors or missing dependencies
 
-3. **Documentation Accuracy Check**:
+4. **Documentation References Testing**:
+   - Grep search for any remaining references to old demo script locations
+   - Verify README.md has accurate examples and paths
+   - Spot-check docs/ for updated paths
+   - Scan code for hardcoded demo script paths
+   - Verify hyperlinks in documentation work
+
+5. **Documentation Accuracy Check**:
    - Compare documentation against actual implementation
-   - Verify consistency across docs
+   - Verify consistency across docs and README
+   - Confirm all moved scripts documented in README
 
 ---
 
@@ -162,6 +234,11 @@ For **each of the following executors** (cline, claude, aider, gemini, direct):
 | Demo scripts have pre-existing bugs | Medium | Low | Test with current implementation before cleanup |
 | Documentation becomes inconsistent | Low | Medium | Follow centralized structure for all executor references |
 | Direct executor overlooked | Medium | High | Explicit Phase 1 step dedicated to direct executor validation |
+| Scripts break when moved to examples/ | Medium | Medium | Test each script from new location; verify relative paths work |
+| Stale references remain in codebase | Medium | Medium | Comprehensive grep search for old demo paths; update all references systematically |
+| Demo scripts have hidden dependencies | Low | High | Inventory all imports and dependencies; test each script thoroughly |
+| Naming inconsistencies persist | Low | Low | Document naming convention before reorganization; apply consistently |
+| CI/CD or automation references old paths | Medium | High | Search codebase for hardcoded paths; check test/automation configs |
 
 ---
 
@@ -171,4 +248,10 @@ For **each of the following executors** (cline, claude, aider, gemini, direct):
 - Documentation updates should follow existing style/conventions in the codebase
 - All documentation changes should reflect the finalized executor abstraction architecture from the prior refactor project
 - The "direct" executor requires special attention as it may be underrepresented in docs
+- Demo script reorganization (Phases 4-5) creates a new `examples/` directory for better project organization
+- Demo scripts should have consistent naming conventions: similar purposes = similar names
+- All demo scripts should include clear usage information (help text, docstrings, or usage instructions)
+- After moving scripts to `examples/`, verify that imports, relative paths, and any path-dependent logic still work correctly
+- The reorganization improves discoverability for new developers and makes the project structure clearer
+- Document which executors each demo script supports (for reference in README.md)
 

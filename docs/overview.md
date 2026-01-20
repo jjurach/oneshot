@@ -78,13 +78,31 @@ Session configuration can be controlled via:
 
 ## Supported Executors
 
-Oneshot supports multiple executor types:
+Oneshot supports five executor types for autonomous task completion:
 
-- **claude** - Claude CLI executor (requires Claude CLI installed)
-- **cline** - Cline VS Code extension integration
-- **aider** - Aider code editor integration
-- **gemini** - Google Gemini CLI executor
-- **direct** - Direct API calls to OpenAI-compatible endpoints (local models, Ollama, etc.)
+- **claude** - Claude CLI executor (requires Claude CLI installed and authenticated)
+- **cline** - Cline VS Code extension integration (requires VS Code with Cline extension)
+- **aider** - Aider code editor integration (requires Aider installation)
+- **gemini** - Google Gemini CLI executor (requires Google Generative AI API access)
+- **direct** - Direct API calls to OpenAI-compatible endpoints (local models via Ollama, OpenAI, Anthropic, Google, Groq, etc.)
+
+### Executor Quick Reference
+
+| Executor | Type | Installation | Best For |
+|----------|------|--------------|----------|
+| **claude** | CLI-based | `brew install anthropic/brew/claude` or `pip install claude-cli` | Integration with Claude models; high-quality responses |
+| **cline** | VS Code Extension | Install Cline extension from VS Code Marketplace | VS Code workflows; file system operations |
+| **aider** | CLI-based | `pip install aider-chat` | Code editing; working with source files |
+| **gemini** | CLI-based | `pip install google-generativeai` or set API key | Google Gemini models; cost-effective solutions |
+| **direct** | HTTP API | None (uses installed packages: `requests` or `httpx`) | Local models (Ollama), custom endpoints, multiple model options |
+
+### Executor Selection Guide
+
+- **For highest quality**: Use `claude` executor with Claude Opus or Sonnet models
+- **For cost-effective local execution**: Use `direct` executor with Ollama
+- **For VS Code integration**: Use `cline` executor
+- **For code-specific tasks**: Use `aider` executor
+- **For Google models**: Use `gemini` executor
 
 ## Session Logging Format
 
@@ -132,9 +150,22 @@ New session logs use JSON format with the following structure:
 6. **Commit** → Commit changes with descriptive messages
 7. **Testing** → Run tests to verify all changes
 
+## Demo Scripts and Examples
+
+Oneshot includes example scripts demonstrating various features and executors:
+
+Located in `examples/` directory:
+
+- **demo_activity_formatter.py** - Demonstrates activity interpretation and formatting pipeline
+- **demo_gemini_executor.py** - Showcases Google Gemini executor with different output formats and approval modes
+- **demo_direct_executor.py** - Demonstrates direct executor functionality for local models via Ollama
+
+See README.md for instructions on running demo scripts.
+
 ## Navigation Tips
 
 - All dates in filenames use format: `YYYY-MM-DD_HH-MM-SS`
 - Documentation is stored in git (except session logs which are .gitignored)
 - Use `grep` or `find` to search across documentation
 - Session logs can be reviewed to understand agent reasoning and tool usage
+- Demo scripts in `examples/` directory provide practical usage examples for each executor
