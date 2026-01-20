@@ -1,6 +1,0 @@
-[INFO] Starting oneshot with worker provider: executor, auditor provider: executor
-[INFO] Creating new session: 2026-01-19_23-13-46_oneshot.json
-[INFO] Iteration 1/5
-[INFO] JSON extraction method: no_completion_indicators
-[INFO] No acceptable response extracted (method: no_completion_indicators), skipping auditor
-[INFO] Iteration 2/5

@@ -58,9 +58,29 @@ General references to "planning" e.g. "plan this" or "Start thinking about next 
 
 ### Active Project Plans
 
+#### Documentation Cleanup & Validation for Executor Abstraction
+**Source**: `dev_notes/requests/prompt-12.md`
+**Detailed Plan**: `dev_notes/project_plans/2026-01-20_10-15-00_documentation-cleanup.md`
+
+- **Objective**: Perform comprehensive documentation review and cleanup following executor abstraction implementation, ensuring all five executors (cline, claude, aider, gemini, direct) are consistently represented and documented
+- **Key Deliverables**:
+  - Audit of all documentation references to each executor
+  - Verification that executor lists are complete across all docs
+  - Cleanup of redundant/superfluous documentation
+  - Testing and fixes for all demo scripts
+  - Updated README.md with complete demo script instructions
+- **Implementation Phases**:
+  1. Documentation audit & cleanup for each executor (cline, claude, aider, gemini, direct)
+  2. Documentation consolidation and removal of redundancies
+  3. Demo script validation and bug fixes
+  4. README.md updates with demo script instructions
+  5. Final validation and verification
+- **Status**: Plan created, awaiting approval
+- **Complexity**: Medium (systematic review and validation task)
+
 #### Executor Abstraction Refactor
 **Source**: `dev_notes/requests/prompt-11.md`
-**Detailed Plan**: `dev_notes/project_plans/2026-01-20_executor-abstraction-detailed.md`
+**Detailed Plan**: `dev_notes/project_plans/2026-01-20_08-27-00_executor-abstraction-refactor.md`
 
 - **Objective**: Consolidate all agent execution logic (cline, claude, gemini, aider, direct) into a unified, extensible executor architecture
 - **Key Deliverables**:
