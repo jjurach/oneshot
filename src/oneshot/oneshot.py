@@ -770,6 +770,107 @@ def parse_json_verdict(json_text):
     return parse_lenient_verdict(json_text)
 
 
+def split_json_stream(raw_output: str) -> List[Dict[str, Any]]:
+    """
+    Split streaming JSON output from cline by JSON object boundaries.
+
+    Cline outputs a stream of JSON objects. This function finds each object
+    by looking for complete JSON structures (starts with { and ends with })
+    and parses them individually.
+
+    Args:
+        raw_output: Raw streaming output containing multiple JSON objects
+
+    Returns:
+        List of parsed JSON objects, or empty list if no valid JSON found
+    """
+    json_objects = []
+
+    if not raw_output or not raw_output.strip():
+        return json_objects
+
+    # Remove ANSI escape codes that cline includes (e.g., [38;5;252;3m)
+    ansi_escape = re.compile(r'\x1B\[[0-9;]*m|\[38;5;\d+m')
+    cleaned = ansi_escape.sub('', raw_output)
+
+    if VERBOSITY >= 2:
+        log_debug(f"[JSON STREAM] Cleaned output: removed ANSI codes, length: {len(cleaned)} chars")
+
+    # Strategy: find each complete JSON object by tracking braces
+    brace_count = 0
+    current_json = []
+    in_json = False
+
+    for char in cleaned:
+        if char == '{':
+            if not in_json:
+                in_json = True
+                current_json = []
+            current_json.append(char)
+            brace_count += 1
+        elif char == '}':
+            current_json.append(char)
+            brace_count -= 1
+            if in_json and brace_count == 0:
+                # Complete JSON object found
+                json_str = ''.join(current_json)
+                try:
+                    obj = json.loads(json_str)
+                    json_objects.append(obj)
+                    if VERBOSITY >= 2:
+                        preview = json.dumps(obj)[:150].replace('\n', '\\n')
+                        log_debug(f"[JSON STREAM] Object {len(json_objects)}: {preview}...")
+                except json.JSONDecodeError as e:
+                    if VERBOSITY >= 2:
+                        preview = json_str[:100].replace('\n', '\\n')
+                        log_debug(f"[JSON STREAM] Failed to parse: {preview}... ({e})")
+                in_json = False
+                current_json = []
+        elif in_json:
+            current_json.append(char)
+
+    log_debug(f"[JSON STREAM] Successfully parsed {len(json_objects)} JSON objects from stream")
+    return json_objects
+
+
+def extract_activity_text(json_object: Dict[str, Any]) -> Optional[str]:
+    """
+    Extract text content from specific cline activity types.
+
+    Looks for:
+    - Activities with "say":"completion_result"
+    - Activities with "ask":"plan_mode_respond"
+
+    Args:
+        json_object: Parsed JSON object from cline output
+
+    Returns:
+        The "text" property if this is a matching activity, None otherwise
+    """
+    if not isinstance(json_object, dict):
+        return None
+
+    # Check for "say":"completion_result"
+    if json_object.get('say') == 'completion_result':
+        text = json_object.get('text')
+        if text:
+            if VERBOSITY >= 2:
+                preview = str(text)[:100].replace('\n', '\\n')
+                log_debug(f"[ACTIVITY TEXT] Found completion_result: {preview}...")
+            return text
+
+    # Check for "ask":"plan_mode_respond"
+    if json_object.get('ask') == 'plan_mode_respond':
+        text = json_object.get('text')
+        if text:
+            if VERBOSITY >= 2:
+                preview = str(text)[:100].replace('\n', '\\n')
+                log_debug(f"[ACTIVITY TEXT] Found plan_mode_respond: {preview}...")
+            return text
+
+    return None
+
+
 def _process_executor_output(raw_output: str, executor_name: str = "executor", task_id: Optional[str] = None, activity_logger=None) -> Tuple[str, List[Any]]:
     """
     Process executor output through activity interpreter and format for display.
@@ -777,12 +878,37 @@ def _process_executor_output(raw_output: str, executor_name: str = "executor", t
     Returns:
         Tuple of (formatted_output, activity_events)
     """
+    log_verbose(f"raw output is [[[{raw_output}]]]")
     try:
+        # Try to parse as JSON stream first (cline output)
+        log_debug(f"[EXECUTOR OUTPUT] Processing output from {executor_name}, length: {len(raw_output)} bytes")
+        json_objects = split_json_stream(raw_output)
+
+        # Extract activity text from JSON objects
+        extracted_texts = []
+        if json_objects:
+            log_debug(f"[EXECUTOR OUTPUT] Found {len(json_objects)} JSON objects in stream")
+            for i, obj in enumerate(json_objects):
+                text = extract_activity_text(obj)
+                if text:
+                    extracted_texts.append(text)
+            log_debug(f"[EXECUTOR OUTPUT] Extracted {len(extracted_texts)} text segments from activities")
+        else:
+            log_debug(f"[EXECUTOR OUTPUT] No JSON objects found in stream")
+
         interpreter = get_interpreter()
         formatter = ActivityFormatter(use_colors=False, use_icons=True)  # No colors for output
 
         # Extract activities from raw output, passing logger for NDJSON logging
         activities = interpreter.interpret_activity(raw_output, activity_logger)
+
+        # If we extracted text from JSON, log it
+        if extracted_texts:
+            aggregated_text = '\n'.join(extracted_texts)
+            log_debug(f"[EXECUTOR OUTPUT] Aggregated extracted text ({len(aggregated_text)} chars):")
+            if VERBOSITY >= 2:
+                preview = aggregated_text[:300].replace('\n', '\\n')
+                log_debug(f"[EXECUTOR OUTPUT] Preview: {preview}{'...' if len(aggregated_text) > 300 else ''}")
 
         # Emit activity events asynchronously (non-blocking)
         if activities:
@@ -1454,7 +1580,7 @@ def run_oneshot(prompt, worker_provider, auditor_provider, max_iterations, resum
             # Enhanced debugging for auditor input
             log_debug(f"[AUDITOR INPUT] Iteration {iteration}: Using auditor_prompt")
             log_debug(f"[AUDITOR INPUT] Auditor model: {auditor_provider.model if hasattr(auditor_provider, 'model') else 'unknown'}")
-            log_debug(f"[AUDITOR INPUT] Activities to evaluate: {len(filtered_lines)} activities, {len(truncated_worker_output)} bytes")
+            log_debug(f"[AUDITOR INPUT] Activities to evaluate: {filtered_count} activities, {len(truncated_worker_output)} bytes")
             log_debug(f"[AUDITOR INPUT] Prompt length: {len(full_auditor_prompt)} chars")
             preview = full_auditor_prompt[:300].replace('\n', '\\n')
             log_debug(f"[AUDITOR INPUT] Preview: {preview}{'...' if len(full_auditor_prompt) > 300 else ''}")
