@@ -60,6 +60,7 @@ class OnehotEngine:
         auditor_prompt_header: str = "oneshot auditor",
         reworker_prompt_header: str = "oneshot reworker",
         keep_log: bool = False,
+        session_log_path: Optional[str] = None,
     ):
         """
         Initialize the OnehotEngine.
@@ -78,6 +79,7 @@ class OnehotEngine:
             auditor_prompt_header: Custom header for auditor prompts
             reworker_prompt_header: Custom header for reworker prompts
             keep_log: Whether to keep the session log file after successful completion (default: False)
+            session_log_path: Optional path for session activity logging
         """
         self.state_machine = state_machine or StateMachine()
         self.executor_worker = executor_worker
@@ -92,6 +94,12 @@ class OnehotEngine:
         self.auditor_prompt_header = auditor_prompt_header
         self.reworker_prompt_header = reworker_prompt_header
         self.keep_log = keep_log
+        self.session_log_path = session_log_path
+        
+        # Store session log path in context if provided
+        if self.session_log_path and self.context:
+            self.context.set_metadata('session_log_path', self.session_log_path)
+            
         self._interrupted = False
         self._setup_signal_handlers()
 
@@ -117,14 +125,35 @@ class OnehotEngine:
         """Safely get a value from the execution context."""
         if not self.context:
             return default
-        # Try the generic method first
+            
+        # Try direct data access first (more reliable for tests and raw data)
+        data = {}
+        if hasattr(self.context, 'to_dict'):
+            data = self.context.to_dict()
+        elif hasattr(self.context, '_data'):
+            data = self.context._data
+            
+        if data:
+            # Check top level
+            if key in data and data[key] is not None:
+                return data[key]
+            # Check metadata
+            if data.get('metadata') and key in data['metadata'] and data['metadata'][key] is not None:
+                return data['metadata'][key]
+            # Check variables
+            if data.get('variables') and key in data['variables'] and data['variables'][key] is not None:
+                return data['variables'][key]
+
+        # Fallback to getter methods if available
         if hasattr(self.context, 'get_variable'):
             val = self.context.get_variable(key)
             if val is not None:
                 return val
-        # Fallback to direct access
-        if hasattr(self.context, 'to_dict'):
-            return self.context.to_dict().get(key, default)
+        if hasattr(self.context, 'get_metadata'):
+            val = self.context.get_metadata(key)
+            if val is not None:
+                return val
+                
         return default
 
     def run(self) -> bool:
@@ -418,7 +447,11 @@ class OnehotEngine:
         """
         with executor.execute(prompt) as stream:
             # Build and execute the complete pipeline
-            log_path = self._get_context_value('session_log_path', 'oneshot-log.json')
+            # Determine log path with oneshot_id if available
+            oneshot_id = self._get_context_value('oneshot_id')
+            default_log = f"{oneshot_id}-oneshot-log.json" if oneshot_id else 'oneshot-log.json'
+            log_path = self._get_context_value('session_log_path', default_log)
+
             pipeline = build_pipeline(
                 stream,
                 log_path,

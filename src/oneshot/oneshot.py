@@ -54,19 +54,10 @@ def log_debug(msg):
 # SESSION MANAGEMENT
 # ============================================================================
 
-# Default session directory
-SESSION_DIR = Path.home() / '.oneshot' / 'sessions'
+from .cli.session_utils import find_latest_session, DEFAULT_SESSION_DIR
 
-def find_latest_session(sessions_dir):
-    """Find the latest session file."""
-    # Support both old (session_*.md) and new (oneshot_*.json) formats
-    session_files = sorted(
-        list(Path(sessions_dir).glob(f"session_*.md")) +
-        list(Path(sessions_dir).glob(f"*oneshot*.json")),
-        key=lambda p: p.name,
-        reverse=True
-    )
-    return session_files[0] if session_files else None
+# Local variable for runtime modification
+SESSION_DIR = DEFAULT_SESSION_DIR
 
 # ============================================================================
 # EXECUTOR FACTORY
@@ -74,35 +65,16 @@ def find_latest_session(sessions_dir):
 
 def _create_executor_instance(executor_type: str, model: Optional[str]) -> 'BaseExecutor':
     """
-    Create an executor instance of the specified type.
-
-    Args:
-        executor_type: Type of executor ('claude', 'cline', 'aider', 'gemini', 'direct')
-        model: Optional model name for executors that support it
-
-    Returns:
-        BaseExecutor instance
-
-    Raises:
-        ValueError: If executor type is not recognized
+    Create an executor instance using the ExecutorRegistry.
     """
-    if executor_type == 'claude':
-        from .providers.claude_executor import ClaudeExecutor
-        return ClaudeExecutor(model=model)
-    elif executor_type == 'cline':
-        from .providers.cline_executor import ClineExecutor
-        return ClineExecutor()
-    elif executor_type == 'aider':
-        from .providers.aider_executor import AiderExecutor
-        return AiderExecutor(model=model)
-    elif executor_type == 'gemini':
-        from .providers.gemini_executor import GeminiCLIExecutor
-        return GeminiCLIExecutor()
-    elif executor_type == 'direct':
-        from .providers.direct_executor import DirectExecutor
-        return DirectExecutor(model=model or "llama-pro:latest")
-    else:
-        raise ValueError(f"Unknown executor type: {executor_type}")
+    from .providers.executor_registry import create_executor
+    
+    # Map CLI model selection to executor constructor arguments
+    kwargs = {}
+    if executor_type in ('claude', 'aider', 'direct'):
+        kwargs['model'] = model
+        
+    return create_executor(executor_type, **kwargs)
 
 # ============================================================================
 # EXECUTION CONTEXT MANAGEMENT
@@ -128,13 +100,20 @@ def _load_or_create_context(resume: bool, session_file: Optional[Path], task_pro
     if resume and session_file:
         log_verbose(f"Loading context from: {session_file}")
         context = ExecutionContext.load(str(session_file))
+        # Update task if provided (allows changing task on resume)
+        if task_prompt:
+            context.set_variable('task', task_prompt)
     else:
         # Create new context with a generated filepath
         log_verbose("Creating new execution context")
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"oneshot_{timestamp}.json"
+        oneshot_id = f"oneshot_{timestamp}"
+        filename = f"{oneshot_id}.json"
         filepath = SESSION_DIR / filename
         context = ExecutionContext(str(filepath))
+        context._data['oneshot_id'] = oneshot_id
+        context.set_variable('task', task_prompt)
+        context.save()
 
     return context
 
@@ -402,6 +381,14 @@ Configuration:
         context.set_metadata("executor_type", args.executor)
         context.set_metadata("start_time", datetime.datetime.now().isoformat())
         context.set_metadata("cwd", os.getcwd())
+        context.set_metadata("max_iterations", args.max_iterations)
+        context.set_metadata("initial_timeout", args.initial_timeout)
+        context.set_metadata("max_timeout", args.max_timeout)
+        context.set_metadata("activity_interval", args.activity_interval)
+        
+        if args.session_log:
+            context.set_metadata("session_log_path", args.session_log)
+        
         context.save()
 
         # Create executor instances
@@ -425,6 +412,7 @@ Configuration:
             auditor_prompt_header=args.auditor_prompt_header,
             reworker_prompt_header=args.reworker_prompt_header,
             keep_log=args.keep_log,
+            session_log_path=args.session_log,
         )
 
         # Run the engine

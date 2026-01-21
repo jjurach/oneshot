@@ -21,7 +21,8 @@ Key Concept: Composable Generators
 import time
 import json
 import threading
-from typing import Generator, Optional, Dict, Any, Iterator
+import sys
+from typing import Generator, Optional, Dict, Any, Iterator, Union
 from dataclasses import dataclass, asdict
 from datetime import datetime
 
@@ -57,16 +58,105 @@ def ingest_stream(stream: Iterator[str]) -> Generator[str, None, None]:
         yield item
 
 
+def extract_json_objects(
+    stream: Generator[Any, None, None]
+) -> Generator[Union[str, Dict[str, Any]], None, None]:
+    """
+    Extract structured JSON objects and free-form preamble from an executor stream.
+
+    Rules:
+    - Preamble text before the first JSON object is yielded as strings.
+    - JSON objects must start with '{' alone on a line.
+    - JSON objects must end with '}' alone on a line.
+    - Once JSON streaming starts, non-JSON lines between objects are ignored.
+    - Invalid JSON after the first successful parse triggers a warning.
+    - Non-string items are passed through unchanged.
+
+    Args:
+        stream: Generator yielding raw chunks of text or objects
+
+    Yields:
+        Either a string (for preamble) or a Dict (for parsed JSON) or original object
+    """
+    line_buffer = ""
+    json_buffer = []
+    in_json_block = False
+    first_json_parsed = False
+
+    for chunk in stream:
+        if not isinstance(chunk, str):
+            if in_json_block:
+                # Interrupted JSON block by a non-string object? 
+                # Flush JSON buffer as strings first to be safe
+                for line in json_buffer:
+                    yield line
+                json_buffer = []
+                in_json_block = False
+            yield chunk
+            continue
+
+        line_buffer += chunk
+        while "\n" in line_buffer:
+            line, line_buffer = line_buffer.split("\n", 1)
+            stripped = line.strip()
+
+            if not in_json_block:
+                if stripped == "{":
+                    in_json_block = True
+                    json_buffer = [line + "\n"]
+                elif stripped:
+                    # Non-empty line outside JSON block
+                    if not first_json_parsed:
+                        # Preamble
+                        yield line
+                    else:
+                        # Noise between JSON objects, ignore as per protocol
+                        pass
+            else:
+                json_buffer.append(line + "\n")
+                if stripped == "}":
+                    in_json_block = False
+                    full_json = "".join(json_buffer)
+                    try:
+                        obj = json.loads(full_json)
+                        first_json_parsed = True
+                        yield obj
+                    except json.JSONDecodeError:
+                        if first_json_parsed:
+                            print(f"\n[PIPELINE] Warning: Invalid JSON detected in stream: {full_json[:100]}...", file=sys.stderr)
+                        # Yield as raw string if it failed to parse so data isn't lost
+                        yield full_json
+                    json_buffer = []
+
+    # Handle remaining data in line_buffer if no trailing newline
+    if line_buffer.strip():
+        stripped = line_buffer.strip()
+        if not in_json_block:
+            if stripped == "{":
+                # Incomplete JSON start at end of stream - yield as string
+                yield line_buffer
+            elif not first_json_parsed:
+                yield line_buffer
+        else:
+            json_buffer.append(line_buffer)
+            full_json = "".join(json_buffer)
+            try:
+                obj = json.loads(full_json)
+                yield obj
+            except json.JSONDecodeError:
+                yield full_json
+
+
 def timestamp_activity(
-    stream: Generator[str, None, None],
+    stream: Generator[Union[str, Dict[str, Any]], None, None],
     executor_name: Optional[str] = None
 ) -> Generator[TimestampedActivity, None, None]:
     """
     Wrap raw items in TimestampedActivity objects with ingestion time.
 
     Args:
-        stream: Generator yielding raw items
-        executor_name: Name of the executor (e.g., "cline", "claude")
+        stream: Generator yielding strings or dicts
+        executor_name: Name of the executor (e.g., "worker", "auditor")
 
     Yields:
         TimestampedActivity objects with current timestamp
@@ -254,10 +344,11 @@ def build_pipeline(
 
     Chains all pipeline stages together in order:
     1. Ingest raw stream
-    2. Timestamp items
-    3. Monitor for inactivity
-    4. Log to disk
-    5. Parse for UI
+    2. Extract JSON objects (line-buffering and framing)
+    3. Timestamp items
+    4. Monitor for inactivity
+    5. Log to disk
+    6. Parse for UI
 
     Args:
         stream: Iterator yielding raw strings from executor
@@ -274,17 +365,20 @@ def build_pipeline(
     # Stage 1: Ingest
     ingested = ingest_stream(stream)
 
-    # Stage 2: Timestamp
-    timestamped = timestamp_activity(ingested, executor_name)
+    # Stage 2: Extract JSON/Preamble
+    extracted = extract_json_objects(ingested)
 
-    # Stage 3: Inactivity Monitor
+    # Stage 3: Timestamp
+    timestamped = timestamp_activity(extracted, executor_name)
+
+    # Stage 4: Inactivity Monitor
     monitor = InactivityMonitor(inactivity_timeout)
     monitored = monitor.monitor_inactivity(timestamped)
 
-    # Stage 4: Log
+    # Stage 5: Log
     logged = log_activity(monitored, log_filepath)
 
-    # Stage 5: Parse
+    # Stage 6: Parse
     parsed = parse_activity(logged)
 
     # Yield final parsed items

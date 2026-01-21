@@ -34,6 +34,11 @@ class ExecutionContext:
     filepath: str
     _data: Dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def load(cls, filepath: str) -> 'ExecutionContext':
+        """Load an execution context from a file."""
+        return cls(filepath)
+
     def __init__(self, filepath: str):
         """Initialize the execution context, loading data if it exists."""
         self.filepath = filepath

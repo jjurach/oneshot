@@ -17,6 +17,7 @@ from oneshot.pipeline import (
     InactivityTimeoutError,
     TimestampedActivity,
     ingest_stream,
+    extract_json_objects,
     timestamp_activity,
     InactivityMonitor,
     log_activity,
@@ -24,6 +25,90 @@ from oneshot.pipeline import (
     build_pipeline,
     validate_ndjson,
 )
+
+
+class TestExtractJsonObjects:
+    """Tests for the extract_json_objects generator."""
+
+    def test_extract_json_with_preamble(self):
+        """Test extraction of JSON with a text preamble."""
+        stream = [
+            "This is a preamble.\n",
+            "It has multiple lines.\n",
+            "{\n",
+            '  "key": "value",\n',
+            '  "status": "DONE"\n',
+            "}\n"
+        ]
+        result = list(extract_json_objects(iter(stream)))
+        
+        assert len(result) == 3
+        assert result[0] == "This is a preamble."
+        assert result[1] == "It has multiple lines."
+        assert isinstance(result[2], dict)
+        assert result[2]["status"] == "DONE"
+
+    def test_extract_multiple_json_objects(self):
+        """Test extraction of multiple JSON objects in a stream."""
+        stream = [
+            "{\n",
+            '  "id": 1\n',
+            "}\n",
+            "noise line\n",
+            "{\n",
+            '  "id": 2\n',
+            "}\n"
+        ]
+        result = list(extract_json_objects(iter(stream)))
+        
+        assert len(result) == 2
+        assert isinstance(result[0], dict)
+        assert result[0]["id"] == 1
+        assert isinstance(result[1], dict)
+        assert result[1]["id"] == 2
+
+    def test_extract_json_chunked_input(self):
+        """Test extraction when input is chunked across lines."""
+        stream = [
+            "Pre", "amble\n",
+            "{\n",
+            '  "ke', 'y": "val', 'ue"\n',
+            "}\n"
+        ]
+        result = list(extract_json_objects(iter(stream)))
+        
+        assert len(result) == 2
+        assert result[0] == "Preamble"
+        assert result[1] == {"key": "value"}
+
+    def test_extract_json_invalid_fallback(self):
+        """Test that invalid JSON is yielded as a string."""
+        stream = [
+            "{\n",
+            '  "broken": "json"\n',
+            # missing closing brace or malformed
+            "  invalid\n",
+            "}\n"
+        ]
+        result = list(extract_json_objects(iter(stream)))
+        
+        assert len(result) == 1
+        assert isinstance(result[0], str)
+        assert "broken" in result[0]
+
+    def test_extract_json_passthrough_non_strings(self):
+        """Test that non-string objects are passed through."""
+        stream = [
+            "Preamble\n",
+            {"already": "parsed"},
+            "Postamble\n"
+        ]
+        result = list(extract_json_objects(iter(stream)))
+        
+        assert len(result) == 3
+        assert result[0] == "Preamble"
+        assert result[1] == {"already": "parsed"}
+        assert result[2] == "Postamble"
 
 
 class TestIngestStream:
@@ -330,7 +415,7 @@ class TestBuildPipeline:
             log_path = f.name
 
         try:
-            stream = iter(["data1", "data2", "data3"])
+            stream = iter(["data1\n", "data2\n", "data3\n"])
             result = list(build_pipeline(stream, log_path, inactivity_timeout=10.0))
 
             assert len(result) == 3
@@ -487,10 +572,10 @@ class TestIntegration:
         try:
             # Create a realistic stream
             test_data = [
-                "Starting execution",
-                "Processing request",
-                "Generating output",
-                "Done"
+                "Starting execution\n",
+                "Processing request\n",
+                "Generating output\n",
+                "Done\n"
             ]
 
             # Run through full pipeline
