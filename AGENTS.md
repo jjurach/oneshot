@@ -11,9 +11,11 @@
 **Step A: Analyze the Request & Declare Intent**
 1.  **Is it a simple question?** → Answer it directly.
 2.  **Is it a Trivial Change?** → Make the change directly. No documentation required.
-3.  **Is it anything else?** → Announce you will create a **Project Plan**.
+3.  **Is it a Research/Documentation Change?** → Make the change directly. No extra documentation required.
+4.  **Is it anything else?** → Announce you will create a **Project Plan**.
 
 > **Trivial Change Definition:** Non-functional changes like fixing typos in comments or code formatting. The full definition and examples are in `docs/01_overview.md`.
+> **Research/Documentation Change:** Requests which culminate ONLY into writes to markdown documents in the root folder or in docs/ or in `dev_notes`.
 
 **Step B: Create a Project Plan (If Required)**
 - Use the `Project Plan` structure defined in Section 3.

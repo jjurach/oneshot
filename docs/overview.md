@@ -15,6 +15,9 @@ This document provides a comprehensive index of all documentation in the oneshot
 Contains detailed technical documentation:
 
 - **overview.md** (this file) - Documentation index and navigation guide
+- **streaming-and-state-management.md** - Design specification for streaming activity processing, state machine persistence, and resume/recovery features
+- **cline-activity-json.md** - Documentation of Cline's JSON output format for activity streaming
+- **direct-executor.md** - Direct executor implementation details for OpenAI-compatible endpoints
 - **possible-todos.md** - Potential future improvements and tasks
 
 ## Development Notes (`/dev_notes/`)
@@ -68,7 +71,16 @@ oneshot --worker-provider direct \
 oneshot --logs-dir dev_notes/oneshot/ "Task"
 
 # Resume previous session
-oneshot --resume "Continue working"
+oneshot --resume <oneshot-id> "Continue working"
+
+# View status of running/completed execution
+oneshot --view <oneshot-id>
+
+# Follow activity log in real-time (tail -f style)
+oneshot --follow <oneshot-id>
+
+# Configure inactivity detection
+oneshot --inactivity-threshold 300 "Task"  # 300 seconds
 ```
 
 ### Configuration
@@ -104,9 +116,37 @@ Oneshot supports five executor types for autonomous task completion:
 - **For code-specific tasks**: Use `aider` executor
 - **For Google models**: Use `gemini` executor
 
+## Architecture and Design
+
+### Streaming Activity Processing
+
+Oneshot is designed to provide real-time streaming updates from agent execution rather than batch dumps at completion. Key architectural components:
+
+- **Activity Pipeline**: Standardized processing of agent outputs through parsing, logging, formatting, and display stages
+- **NDJSON Activity Log**: Append-only `<oneshot-id>-oneshot-log.json` file containing timestamped activity packets
+- **State Machine**: Persistent state tracking in `<oneshot-id>-oneshot.json` with full state transition history
+- **Resume/Recovery**: Ability to resume interrupted executions and recover from failures
+
+For complete details, see **streaming-and-state-management.md**.
+
+### Activity Log Format
+
+Each executor's activity is captured in real-time as NDJSON (newline-delimited JSON):
+
+```json
+{"ts":1737395456789,"executor":"cline","oneshot_id":"abc-123","activity":{"type":"say","text":"..."}}
+{"ts":1737395457123,"executor":"cline","oneshot_id":"abc-123","activity":{"type":"tool_use","tool":"read_file"}}
+```
+
+**Key Fields:**
+- `ts`: Ingestion timestamp (milliseconds since epoch) - proves streaming behavior
+- `executor`: Executor type (cline, claude, gemini, aider, direct)
+- `oneshot_id`: Unique execution identifier
+- `activity`: Original executor output JSON, preserved as-is
+
 ## Session Logging Format
 
-New session logs use JSON format with the following structure:
+Session state files use JSON format with the following structure:
 
 ```json
 {
