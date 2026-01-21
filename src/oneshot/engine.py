@@ -56,6 +56,9 @@ class OnehotEngine:
         result_extractor: Optional[ResultExtractor] = None,
         verbose: bool = False,
         ui_callback=None,
+        worker_prompt_header: str = "oneshot execution",
+        auditor_prompt_header: str = "oneshot auditor",
+        reworker_prompt_header: str = "oneshot reworker",
     ):
         """
         Initialize the OnehotEngine.
@@ -70,6 +73,9 @@ class OnehotEngine:
             result_extractor: ResultExtractor instance for parsing results
             verbose: Enable verbose logging
             ui_callback: Optional callback for UI rendering
+            worker_prompt_header: Custom header for worker prompts
+            auditor_prompt_header: Custom header for auditor prompts
+            reworker_prompt_header: Custom header for reworker prompts
         """
         self.state_machine = state_machine or StateMachine()
         self.executor_worker = executor_worker
@@ -80,6 +86,9 @@ class OnehotEngine:
         self.result_extractor = result_extractor or ResultExtractor()
         self.verbose = verbose
         self.ui_callback = ui_callback
+        self.worker_prompt_header = worker_prompt_header
+        self.auditor_prompt_header = auditor_prompt_header
+        self.reworker_prompt_header = reworker_prompt_header
         self._interrupted = False
         self._setup_signal_handlers()
 
@@ -192,7 +201,8 @@ class OnehotEngine:
 
         # Check max iterations
         iteration_count = self.context.get_iteration_count() if self.context else 0
-        if current_state == OnehotState.REITERATION_PENDING:
+        is_reiteration = current_state == OnehotState.REITERATION_PENDING
+        if is_reiteration:
             iteration_count += 1
             if iteration_count >= self.max_iterations:
                 self.log_debug(f"Max iterations ({self.max_iterations}) reached")
@@ -208,6 +218,11 @@ class OnehotEngine:
         # Transition to WORKER_EXECUTING
         next_state = self.state_machine.transition(current_state, "start" if current_state == OnehotState.CREATED else "next")
         self.state_machine.current_state = OnehotState.WORKER_EXECUTING
+
+        # Store reiteration flag in context for prompt generation
+        if self.context and is_reiteration:
+            self.context._data['is_reiteration'] = True
+            self.context.save()
         self._save_state()
 
         # Execute worker with streaming pipeline
@@ -409,11 +424,47 @@ class OnehotEngine:
         # Get base task from context
         task = self._get_context_value('task', 'Undefined task')
 
+        # Use reworker header if this is a reiteration (retry after auditor feedback)
+        is_reiteration = self._get_context_value('is_reiteration', False)
+        header = self.reworker_prompt_header if is_reiteration else self.worker_prompt_header
+
+        # Build the worker prompt with header template
+        header_template = f"""{header}
+
+IMPORTANT: Provide your final answer in valid JSON format when possible. Include completion indicators like "DONE", "success", or "status" even in non-JSON responses.
+
+PREFERRED FORMAT (valid JSON):
+{{
+  "status": "DONE",
+  "result": "<your answer/output here>",
+  "confidence": "<high/medium/low>",
+  "validation": "<how you verified this answer - sources, output shown, reasoning explained>",
+  "execution_proof": "<what you actually did - optional if no external tools were used>"
+}}
+
+ALTERNATIVE: If JSON is difficult, include clear completion indicators:
+- Words like "DONE", "success", "completed", "finished"
+- Status/result fields even in malformed JSON
+- Clear indication that the task is complete
+
+IMPORTANT GUIDANCE:
+- "result" should be your final answer
+- "validation" should describe HOW you got it (tools used, sources checked, actual output if execution)
+- "execution_proof" is optional - only include if you used external tools, commands, or computations
+- For knowledge-based answers: brief validation is sufficient
+- For coding tasks: describe the changes made
+- Be honest and specific - don't make up results
+- Set "status" to "DONE" or use completion words when you believe the task is completed
+
+Complete this task:
+"""
+
         # Inject iteration context if not first iteration
         if iteration > 0:
-            return f"{task}\n\n[Iteration {iteration + 1}/{self.max_iterations}]\nPrevious attempts did not complete the task. Try again with a different approach."
+            iteration_context = f"\n\n[Iteration {iteration + 1}/{self.max_iterations}]\nPrevious attempts did not complete the task. Try again with a different approach.\n"
+            return header_template + iteration_context + task
         else:
-            return task
+            return header_template + task
 
     def _generate_auditor_prompt(self) -> str:
         """
@@ -430,9 +481,30 @@ class OnehotEngine:
             result = "(No worker output found)"
 
         task = self._get_context_value('task', 'Undefined task')
-        prompt = f"""Review the following work and provide a verdict:
 
-TASK:
+        # Build auditor prompt with header template
+        header_template = f"""{self.auditor_prompt_header}
+
+You are a Success Auditor. Evaluate the worker's response with TRUST by default, accepting both valid JSON and responses with clear completion indicators.
+
+The original task and project context should guide your evaluation of what "DONE" means. Be lenient and trust the worker's judgment unless there are clear, serious issues.
+
+ACCEPT responses that show clear completion intent:
+- Valid JSON with "status": "DONE" or similar
+- Malformed JSON with completion words like "success", "completed", "finished"
+- Plain text with clear completion indicators
+- Any response that reasonably addresses the task
+
+Only reject if there are REAL, significant issues:
+1. Does the response show clear completion intent? (reject only if completely unclear)
+2. Does the result seem reasonable for the task? (reject only if completely implausible)
+3. Is there any indication of task completion? (reject only if entirely missing)
+
+Make your decision based on the task, work result, and these guidelines:
+
+"""
+
+        prompt = header_template + f"""TASK:
 {task}
 
 WORK RESULT:

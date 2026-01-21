@@ -2,7 +2,7 @@
 
 import pytest
 import sys
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from oneshot.oneshot import main as oneshot_main
 
 
@@ -17,21 +17,45 @@ class TestMain:
         assert exc_info.value.code == 1
 
     @patch('sys.argv', ['oneshot', 'task description', '--executor', 'cline'])
-    @patch('oneshot.oneshot.run_oneshot')
-    def test_main_cline_without_model_succeeds(self, mock_run):
+    @patch('oneshot.engine.OnehotEngine.run')
+    @patch('oneshot.oneshot._create_executor_instance')
+    @patch('oneshot.oneshot._load_or_create_context')
+    def test_main_cline_without_model_succeeds(self, mock_context, mock_executor, mock_engine_run):
         """Test cline without model succeeds."""
-        mock_run.return_value = True
+        # Mock the engine run to return success
+        mock_engine_run.return_value = True
+
+        # Mock executor factory
+        mock_exec = MagicMock()
+        mock_executor.return_value = mock_exec
+
+        # Mock context
+        mock_ctx = MagicMock()
+        mock_context.return_value = mock_ctx
+
         with pytest.raises(SystemExit) as e:
             oneshot_main()
         assert e.value.code == 0
-        mock_run.assert_called_once()
+        mock_engine_run.assert_called_once()
 
     @patch('sys.argv', ['oneshot', 'task description', '--executor', 'claude', '--worker-model', 'some-model'])
-    @patch('oneshot.oneshot.run_oneshot')
-    def test_main_claude_with_model_succeeds(self, mock_run):
+    @patch('oneshot.engine.OnehotEngine.run')
+    @patch('oneshot.oneshot._create_executor_instance')
+    @patch('oneshot.oneshot._load_or_create_context')
+    def test_main_claude_with_model_succeeds(self, mock_context, mock_executor, mock_engine_run):
         """Test claude with model succeeds."""
-        mock_run.return_value = True
+        # Mock the engine run to return success
+        mock_engine_run.return_value = True
+
+        # Mock executor factory
+        mock_exec = MagicMock()
+        mock_executor.return_value = mock_exec
+
+        # Mock context
+        mock_ctx = MagicMock()
+        mock_context.return_value = mock_ctx
+
         with pytest.raises(SystemExit) as e:
             oneshot_main()
         assert e.value.code == 0
-        mock_run.assert_called_once()
+        mock_engine_run.assert_called_once()
