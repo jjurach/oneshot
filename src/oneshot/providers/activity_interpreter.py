@@ -341,34 +341,45 @@ class ActivityInterpreter:
 
         return json_objects
 
-    def interpret_activity(self, raw_output: str, activity_logger=None) -> List[ActivityEvent]:
+    def interpret_activity(self, raw_output: str, activity_logger=None, executor_type: str = "worker") -> List[ActivityEvent]:
         """
         Interpret executor output and extract meaningful activity patterns.
 
         Args:
             raw_output: Raw output from Claude executor
-            activity_logger: Optional ActivityLogger to log raw JSON activities
+            activity_logger: Optional ActivityLogger to log raw JSON activities with enhanced format
+            executor_type: Type of executor ("worker" or "auditor") for activity source attribution
 
         Returns:
             List of structured activity events
         """
         events = []
 
-        # Parse streaming JSON to extract raw activities for logging
+        # Parse streaming JSON to extract raw activities for enhanced logging
         json_objects = []
         if activity_logger:
             try:
                 # Extract complete JSON objects from raw output (handles multi-line JSON)
                 json_objects = self._extract_json_objects(raw_output)
 
-                # Log each valid JSON object to NDJSON file
+                # Log each valid JSON object with enhanced format
                 for obj in json_objects:
                     try:
-                        json_str = json.dumps(obj, separators=(',', ':'))
-                        activity_logger.log_json_line(json_str)
+                        # Determine activity source based on executor type and content
+                        activity_source = self._determine_activity_source(obj, executor_type)
+
+                        # Use enhanced logging method
+                        success = activity_logger.log_enhanced_activity(
+                            data=obj,
+                            activity_source=activity_source,
+                            executor=executor_type,
+                            is_heartbeat=obj.get("is_heartbeat", False)
+                        )
+                        if not success:
+                            logger.warning(f"Failed to log enhanced activity: {obj}")
                     except (TypeError, ValueError) as e:
                         # Skip objects that can't be serialized
-                        logger.warning(f"Failed to serialize JSON object for logging: {e}")
+                        logger.warning(f"Failed to serialize JSON object for enhanced logging: {e}")
                         continue
             except Exception as e:
                 # If JSON parsing fails completely, skip logging for this output
@@ -393,6 +404,46 @@ class ActivityInterpreter:
             ))
 
         return events
+
+    def _determine_activity_source(self, json_obj: Dict[str, Any], executor_type: str) -> str:
+        """
+        Determine whether activity is from agent or oneshot system.
+
+        Args:
+            json_obj: Parsed JSON object from executor output
+            executor_type: Type of executor (worker/auditor)
+
+        Returns:
+            str: "agent" for external AI activity, "oneshot" for internal system activity
+        """
+        # System activities (heartbeats, checkpoints, etc.)
+        if json_obj.get("is_heartbeat", False):
+            return "oneshot"
+
+        # Check for system-generated messages
+        data = json_obj.get("data", "")
+        if isinstance(data, str):
+            system_indicators = [
+                "Following task conversation until completion",
+                "Conversation history",
+                "checkpoint_created",
+                "ERROR] You did not use a tool",
+                "Reminder: Instructions for Tool Use"
+            ]
+            if any(indicator in data for indicator in system_indicators):
+                return "oneshot"
+
+        # Check for structured data types
+        if isinstance(data, dict):
+            data_type = data.get("type", "")
+            if data_type in ["say", "api_req_started", "reasoning", "text", "completion_result"]:
+                # These are typically from the agent
+                return "agent"
+            elif data_type in ["checkpoint_created"]:
+                return "oneshot"
+
+        # Default to agent for executor outputs
+        return "agent"
 
     def has_sensitive_data(self, text: str) -> bool:
         """

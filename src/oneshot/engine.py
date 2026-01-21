@@ -332,6 +332,7 @@ class OnehotEngine:
         # Execute auditor with streaming pipeline
         try:
             prompt = self._generate_auditor_prompt()
+
             self._pump_pipeline(
                 self.executor_auditor,
                 prompt,

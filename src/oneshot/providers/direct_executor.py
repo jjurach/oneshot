@@ -3,6 +3,7 @@ Direct executor that forwards prompts to Ollama via HTTP API.
 """
 
 import os
+import time
 from contextlib import contextmanager
 from typing import Dict, Any, List, Optional, Tuple, Generator
 from .base import BaseExecutor, ExecutionResult, RecoveryResult
@@ -165,19 +166,42 @@ class DirectExecutor(BaseExecutor):
 
         return raw_output, auditor_details
 
-    def run_task(self, task: str) -> ExecutionResult:
+    def run_task(self, task: str, activity_logger=None) -> ExecutionResult:
         """
         Execute a task by forwarding the prompt to Ollama.
 
         Args:
             task (str): The task description/prompt to execute
+            activity_logger: Optional ActivityLogger for enhanced logging
 
         Returns:
             ExecutionResult: Detailed result of the task execution
         """
         try:
+            # Log the prompt if logger is available
+            if activity_logger:
+                activity_logger.log_prompt(
+                    prompt=task,
+                    prompt_type="direct_executor_task",
+                    target_executor="direct",
+                    additional_metadata={
+                        "model": self.model,
+                        "base_url": self.base_url
+                    }
+                )
+
             # Check connection to Ollama first
             if not self.client.check_connection():
+                if activity_logger:
+                    activity_logger.log_executor_interaction(
+                        interaction_type="connection_check",
+                        executor_name="direct",
+                        success=False,
+                        additional_metadata={
+                            "error": "Cannot connect to Ollama service",
+                            "base_url": self.base_url
+                        }
+                    )
                 return ExecutionResult(
                     success=False,
                     output='',
@@ -189,6 +213,18 @@ class DirectExecutor(BaseExecutor):
                     }
                 )
 
+            # Log successful connection
+            if activity_logger:
+                activity_logger.log_executor_interaction(
+                    interaction_type="connection_check",
+                    executor_name="direct",
+                    success=True,
+                    additional_metadata={"base_url": self.base_url}
+                )
+
+            # Record start time for duration calculation
+            start_time = time.time() if activity_logger else None
+
             # Generate response from Ollama
             ollama_response: OllamaResponse = self.client.generate(
                 model=self.model,
@@ -196,8 +232,20 @@ class DirectExecutor(BaseExecutor):
                 stream=False  # Use non-streaming for simplicity
             )
 
+            # Calculate duration if logging
+            duration_ms = (time.time() - start_time) * 1000 if start_time else None
+
             # Check if the response was successful
             if not ollama_response.done:
+                if activity_logger:
+                    activity_logger.log_executor_interaction(
+                        interaction_type="api_request",
+                        executor_name="direct",
+                        request_data={"model": self.model, "prompt_length": len(task)},
+                        success=False,
+                        duration_ms=duration_ms,
+                        additional_metadata={"error": "Ollama response was incomplete"}
+                    )
                 return ExecutionResult(
                     success=False,
                     output='',
@@ -207,6 +255,20 @@ class DirectExecutor(BaseExecutor):
                         'model': self.model,
                         'base_url': self.base_url
                     }
+                )
+
+            # Log successful response
+            if activity_logger:
+                activity_logger.log_executor_interaction(
+                    interaction_type="api_request",
+                    executor_name="direct",
+                    request_data={"model": self.model, "prompt_length": len(task)},
+                    response_data={
+                        "response_length": len(ollama_response.response),
+                        "eval_count": ollama_response.eval_count
+                    },
+                    success=True,
+                    duration_ms=duration_ms
                 )
 
             # Return successful result
@@ -229,6 +291,17 @@ class DirectExecutor(BaseExecutor):
         except Exception as e:
             # Handle any exceptions during execution
             error_msg = f"Direct executor failed: {str(e)}"
+            if activity_logger:
+                activity_logger.log_executor_interaction(
+                    interaction_type="api_request",
+                    executor_name="direct",
+                    request_data={"model": self.model, "prompt_length": len(task)},
+                    success=False,
+                    additional_metadata={
+                        "error": error_msg,
+                        "exception_type": type(e).__name__
+                    }
+                )
             return ExecutionResult(
                 success=False,
                 output='',
