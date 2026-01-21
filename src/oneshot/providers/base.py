@@ -1,6 +1,21 @@
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Generator
+
+@dataclass
+class RecoveryResult:
+    """
+    Result of an executor recovery operation.
+
+    Attributes:
+        success (bool): Whether recovery was successful
+        recovered_activity (List[Any]): Activities recovered from external state
+        verdict (Optional[str]): Human-readable verdict (e.g., "DONE", "INCOMPLETE")
+    """
+    success: bool
+    recovered_activity: List[Any]
+    verdict: Optional[str] = None
 
 @dataclass
 class ExecutionResult:
@@ -27,7 +42,51 @@ class BaseExecutor(ABC):
     Defines the common interface and core methods that all executor providers
     must implement. Each executor encapsulates command construction, activity
     parsing, and output formatting specific to its agent type.
+
+    Phase 4 Enhancement: Adds context manager streaming interface for resource management.
     """
+
+    @contextmanager
+    @abstractmethod
+    def execute(self, prompt: str) -> Generator[str, None, None]:
+        """
+        Execute a task and yield streaming output.
+
+        Context manager that yields a generator/stream of output from the executor.
+        Automatically handles resource cleanup (process termination) on exit.
+
+        Args:
+            prompt (str): The task prompt to execute
+
+        Yields:
+            str: Streaming output from the executor
+
+        Raises:
+            Any exceptions from the executor process
+
+        Example:
+            with executor.execute("task") as stream:
+                for line in stream:
+                    print(line)
+            # Process is automatically cleaned up here
+        """
+        pass
+
+    @abstractmethod
+    def recover(self, task_id: str) -> RecoveryResult:
+        """
+        Recover activity from external state (forensic analysis).
+
+        Analyzes filesystem, logs, or other external state to salvage a dead session.
+        Useful for resuming interrupted tasks or analyzing failed runs.
+
+        Args:
+            task_id (str): Identifier for the task to recover
+
+        Returns:
+            RecoveryResult: Result of recovery attempt with recovered activities
+        """
+        pass
 
     @abstractmethod
     def run_task(self, task: str) -> ExecutionResult:

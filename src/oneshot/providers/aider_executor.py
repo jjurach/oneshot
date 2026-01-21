@@ -1,8 +1,10 @@
 import os
 import re
 import subprocess
-from typing import Dict, Any, List, Optional, Tuple
-from .base import BaseExecutor, ExecutionResult
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple, Generator
+from .base import BaseExecutor, ExecutionResult, RecoveryResult
 
 class AiderExecutor(BaseExecutor):
     """
@@ -24,6 +26,7 @@ class AiderExecutor(BaseExecutor):
         """
         self.git_dir = git_dir or os.getcwd()
         self.model = model
+        self.process = None
         # Ensure aider can find the git directory
         os.chdir(self.git_dir)
 
@@ -64,6 +67,151 @@ class AiderExecutor(BaseExecutor):
             bool: True
         """
         return True
+
+    @contextmanager
+    def execute(self, prompt: str) -> Generator[str, None, None]:
+        """
+        Execute a task via Aider as a subprocess and yield streaming output.
+
+        This context manager starts the Aider process, yields a generator that
+        produces streaming output, and ensures the process is terminated on exit.
+
+        Args:
+            prompt (str): The task prompt to execute
+
+        Yields:
+            Generator[str, None, None]: A generator yielding lines of output
+
+        Raises:
+            OSError: If Aider command is not found or cannot be executed
+        """
+        cmd = self.build_command(prompt)
+        self.process = None
+
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True,
+                cwd=self.git_dir
+            )
+
+            yield self._stream_output(self.process)
+
+        finally:
+            if self.process is not None and self.process.poll() is None:
+                # Process still running, terminate it
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if termination times out
+                    self.process.kill()
+                    self.process.wait()
+
+    def recover(self, task_id: str) -> RecoveryResult:
+        """
+        Recover activity from Aider's git history and logs.
+
+        Aider creates git commits for its changes. This method examines the git log
+        to recover execution information.
+
+        Args:
+            task_id (str): Task identifier (may be used for log file lookup)
+
+        Returns:
+            RecoveryResult: Result with recovered activities or failure info
+        """
+        try:
+            # Try to get the latest git commit that Aider might have created
+            try:
+                git_log_result = subprocess.run(
+                    ['git', 'log', '--oneline', '-20'],
+                    cwd=self.git_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+
+                if git_log_result.returncode != 0:
+                    return RecoveryResult(
+                        success=False,
+                        recovered_activity=[],
+                        verdict="Git repository not accessible"
+                    )
+
+                commits = git_log_result.stdout.strip().split('\n')
+                recovered = [
+                    {"type": "git_commit", "hash": commit.split()[0], "message": ' '.join(commit.split()[1:])}
+                    for commit in commits if commit
+                ]
+
+                # Also look for Aider log files
+                log_locations = [
+                    Path(self.git_dir) / ".aider.chat.history.md",
+                    Path(self.git_dir) / ".aider.log",
+                    Path.home() / ".aider" / "logs" / task_id / "log.txt",
+                ]
+
+                for log_path in log_locations:
+                    if log_path.exists():
+                        try:
+                            with open(log_path, 'r') as f:
+                                recovered.append({
+                                    "type": "aider_log",
+                                    "path": str(log_path),
+                                    "content_preview": f.read(500)
+                                })
+                        except IOError:
+                            pass
+
+                final_verdict = "INCOMPLETE"
+                if recovered:
+                    final_verdict = "DONE" if any(
+                        c.get('message', '').lower().find('done') != -1
+                        for c in recovered
+                        if isinstance(c, dict) and 'message' in c
+                    ) else "INCOMPLETE"
+
+                return RecoveryResult(
+                    success=len(recovered) > 0,
+                    recovered_activity=recovered,
+                    verdict=final_verdict
+                )
+
+            except subprocess.TimeoutExpired:
+                return RecoveryResult(
+                    success=False,
+                    recovered_activity=[],
+                    verdict="Git command timed out"
+                )
+
+        except Exception as e:
+            return RecoveryResult(
+                success=False,
+                recovered_activity=[],
+                verdict=f"Recovery failed: {str(e)}"
+            )
+
+    def _stream_output(self, process: subprocess.Popen) -> Generator[str, None, None]:
+        """
+        Generator that yields lines from a subprocess stdout.
+
+        Args:
+            process (subprocess.Popen): The subprocess to read from
+
+        Yields:
+            str: Lines of output from stdout
+        """
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+            yield line
 
     def build_command(self, prompt: str, model: Optional[str] = None) -> List[str]:
         """

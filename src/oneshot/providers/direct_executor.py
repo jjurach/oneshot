@@ -3,8 +3,9 @@ Direct executor that forwards prompts to Ollama via HTTP API.
 """
 
 import os
-from typing import Dict, Any, List, Optional, Tuple
-from .base import BaseExecutor, ExecutionResult
+from contextlib import contextmanager
+from typing import Dict, Any, List, Optional, Tuple, Generator
+from .base import BaseExecutor, ExecutionResult, RecoveryResult
 from .ollama_client import OllamaClient, OllamaResponse
 
 
@@ -72,6 +73,55 @@ class DirectExecutor(BaseExecutor):
             bool: False
         """
         return False
+
+    @contextmanager
+    def execute(self, prompt: str) -> Generator[str, None, None]:
+        """
+        Execute a task via Ollama HTTP API and yield the response.
+
+        Since DirectExecutor uses HTTP API (not subprocess), there's no process to manage.
+        This context manager simply yields the complete response.
+
+        Args:
+            prompt (str): The task prompt to execute
+
+        Yields:
+            str: Complete response from Ollama
+
+        Raises:
+            Exception: If connection fails or API error occurs
+        """
+        if not self.client.check_connection():
+            raise RuntimeError(f"Cannot connect to Ollama at {self.base_url}")
+
+        try:
+            ollama_response: OllamaResponse = self.client.generate(
+                model=self.model,
+                prompt=prompt,
+                stream=False
+            )
+            yield ollama_response.response
+        finally:
+            # No cleanup needed for HTTP API
+            pass
+
+    def recover(self, task_id: str) -> RecoveryResult:
+        """
+        Recover from failed Direct execution.
+
+        Direct executor uses HTTP API with no persistent state, so recovery is a no-op.
+
+        Args:
+            task_id (str): Task identifier (unused for Direct executor)
+
+        Returns:
+            RecoveryResult: Failed recovery (no state to recover from)
+        """
+        return RecoveryResult(
+            success=False,
+            recovered_activity=[],
+            verdict="No persistent state (HTTP API executor)"
+        )
 
     def build_command(self, prompt: str, model: Optional[str] = None) -> List[str]:
         """

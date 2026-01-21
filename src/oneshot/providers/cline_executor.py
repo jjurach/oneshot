@@ -7,8 +7,12 @@ and output formatting logic.
 
 import json
 import re
-from typing import List, Optional, Dict, Any, Tuple
-from .base import BaseExecutor, ExecutionResult
+import subprocess
+import select
+from contextlib import contextmanager
+from pathlib import Path
+from typing import List, Optional, Dict, Any, Tuple, Generator
+from .base import BaseExecutor, ExecutionResult, RecoveryResult
 
 
 class ClineExecutor(BaseExecutor):
@@ -22,7 +26,7 @@ class ClineExecutor(BaseExecutor):
 
     def __init__(self):
         """Initialize ClineExecutor."""
-        pass
+        self.process = None
 
     def get_provider_name(self) -> str:
         """
@@ -60,6 +64,125 @@ class ClineExecutor(BaseExecutor):
             bool: True
         """
         return True
+
+    @contextmanager
+    def execute(self, prompt: str) -> Generator[str, None, None]:
+        """
+        Execute a task via Cline as a subprocess and yield streaming output.
+
+        This context manager starts the Cline process, yields a generator that
+        produces streaming output, and ensures the process is terminated on exit.
+
+        Args:
+            prompt (str): The task prompt to execute
+
+        Yields:
+            Generator[str, None, None]: A generator yielding lines of output
+
+        Raises:
+            OSError: If Cline command is not found or cannot be executed
+        """
+        cmd = self.build_command(prompt)
+        self.process = None
+
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
+            )
+
+            yield self._stream_output(self.process)
+
+        finally:
+            if self.process is not None and self.process.poll() is None:
+                # Process still running, terminate it
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if termination times out
+                    self.process.kill()
+                    self.process.wait()
+
+    def recover(self, task_id: str) -> RecoveryResult:
+        """
+        Recover activity from Cline's task state files (forensic analysis).
+
+        Cline stores task information in ~/.cline/tasks/{task_id}/ui_messages.json.
+        This method attempts to parse that file to recover lost activity.
+
+        Args:
+            task_id (str): The Cline task ID to recover from
+
+        Returns:
+            RecoveryResult: Result with recovered activities or failure info
+        """
+        try:
+            task_path = Path.home() / ".cline" / "tasks" / task_id / "ui_messages.json"
+
+            if not task_path.exists():
+                return RecoveryResult(
+                    success=False,
+                    recovered_activity=[],
+                    verdict=f"No task state found at {task_path}"
+                )
+
+            with open(task_path, 'r') as f:
+                messages = json.load(f)
+
+            if not isinstance(messages, list):
+                return RecoveryResult(
+                    success=False,
+                    recovered_activity=[],
+                    verdict="Task state is not a list of messages"
+                )
+
+            # Filter for completion/error messages
+            recovered = []
+            final_verdict = "INCOMPLETE"
+
+            for msg in messages:
+                if isinstance(msg, dict):
+                    recovered.append(msg)
+                    # Check for completion indicators
+                    if msg.get('type') == 'completion' or msg.get('say') == 'completion_result':
+                        final_verdict = "DONE"
+
+            return RecoveryResult(
+                success=True,
+                recovered_activity=recovered,
+                verdict=final_verdict
+            )
+
+        except Exception as e:
+            return RecoveryResult(
+                success=False,
+                recovered_activity=[],
+                verdict=f"Recovery failed: {str(e)}"
+            )
+
+    def _stream_output(self, process: subprocess.Popen) -> Generator[str, None, None]:
+        """
+        Generator that yields lines from a subprocess stdout with timeout support.
+
+        Uses select.select for non-blocking I/O on Unix systems, allowing
+        for timeout and inactivity monitoring.
+
+        Args:
+            process (subprocess.Popen): The subprocess to read from
+
+        Yields:
+            str: Lines of output from stdout
+        """
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+            yield line
 
     def build_command(self, prompt: str, model: Optional[str] = None) -> List[str]:
         """

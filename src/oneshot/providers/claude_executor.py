@@ -7,8 +7,11 @@ and output formatting logic.
 
 import json
 import re
-from typing import List, Optional, Dict, Any, Tuple
-from .base import BaseExecutor, ExecutionResult
+import subprocess
+from contextlib import contextmanager
+from pathlib import Path
+from typing import List, Optional, Dict, Any, Tuple, Generator
+from .base import BaseExecutor, ExecutionResult, RecoveryResult
 
 
 class ClaudeExecutor(BaseExecutor):
@@ -28,6 +31,7 @@ class ClaudeExecutor(BaseExecutor):
             model (Optional[str]): Optional model specification (e.g., "claude-3-sonnet")
         """
         self.model = model
+        self.process = None
 
     def get_provider_name(self) -> str:
         """
@@ -66,6 +70,127 @@ class ClaudeExecutor(BaseExecutor):
             bool: True
         """
         return True
+
+    @contextmanager
+    def execute(self, prompt: str) -> Generator[str, None, None]:
+        """
+        Execute a task via Claude CLI as a subprocess and yield streaming output.
+
+        This context manager starts the Claude process, yields a generator that
+        produces streaming output, and ensures the process is terminated on exit.
+
+        Args:
+            prompt (str): The task prompt to execute
+
+        Yields:
+            Generator[str, None, None]: A generator yielding lines of output
+
+        Raises:
+            OSError: If Claude command is not found or cannot be executed
+        """
+        cmd = self.build_command(prompt)
+        self.process = None
+
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line buffered
+                universal_newlines=True
+            )
+
+            yield self._stream_output(self.process)
+
+        finally:
+            if self.process is not None and self.process.poll() is None:
+                # Process still running, terminate it
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if termination times out
+                    self.process.kill()
+                    self.process.wait()
+
+    def recover(self, task_id: str) -> RecoveryResult:
+        """
+        Recover activity from Claude Code's session logs.
+
+        Claude Code stores session information in various locations. This method
+        attempts to find and parse relevant log files to recover lost activity.
+
+        Args:
+            task_id (str): The Claude Code session ID to recover from
+
+        Returns:
+            RecoveryResult: Result with recovered activities or failure info
+        """
+        try:
+            # Try multiple possible locations for Claude logs
+            log_locations = [
+                Path.home() / ".claude" / "sessions" / task_id / "log.json",
+                Path.home() / ".cache" / "claude" / task_id / "log.json",
+                Path.home() / ".local" / "share" / "claude" / task_id / "log.json",
+            ]
+
+            recovered = []
+            found_any = False
+
+            for log_path in log_locations:
+                if log_path.exists():
+                    found_any = True
+                    with open(log_path, 'r') as f:
+                        try:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                recovered.extend(data)
+                            elif isinstance(data, dict):
+                                recovered.append(data)
+                        except json.JSONDecodeError:
+                            pass
+
+            if not found_any:
+                return RecoveryResult(
+                    success=False,
+                    recovered_activity=[],
+                    verdict=f"No session logs found for {task_id}"
+                )
+
+            final_verdict = "INCOMPLETE"
+            for activity in recovered:
+                if isinstance(activity, dict) and activity.get('status') == 'completed':
+                    final_verdict = "DONE"
+
+            return RecoveryResult(
+                success=len(recovered) > 0,
+                recovered_activity=recovered,
+                verdict=final_verdict
+            )
+
+        except Exception as e:
+            return RecoveryResult(
+                success=False,
+                recovered_activity=[],
+                verdict=f"Recovery failed: {str(e)}"
+            )
+
+    def _stream_output(self, process: subprocess.Popen) -> Generator[str, None, None]:
+        """
+        Generator that yields lines from a subprocess stdout.
+
+        Args:
+            process (subprocess.Popen): The subprocess to read from
+
+        Yields:
+            str: Lines of output from stdout
+        """
+        while True:
+            line = process.stdout.readline()
+            if not line:
+                break
+            yield line
 
     def build_command(self, prompt: str, model: Optional[str] = None) -> List[str]:
         """
