@@ -15,6 +15,8 @@ This document provides a comprehensive index of all documentation in the oneshot
 Contains detailed technical documentation:
 
 - **overview.md** (this file) - Documentation index and navigation guide
+- **project-structure.md** - Locations of project components and architecture details
+- **templates.md** - Mandatory templates for Project Plans and Change Documentation
 - **streaming-and-state-management.md** - Design specification for streaming activity processing, state machine persistence, and resume/recovery features
 - **cline-activity-json.md** - Documentation of Cline's JSON output format for activity streaming
 - **direct-executor.md** - Direct executor implementation details for OpenAI-compatible endpoints
