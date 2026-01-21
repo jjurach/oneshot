@@ -1,5 +1,7 @@
 # Project Plan: Core Architecture Refactoring - Phase 4: The Hands
 
+**Status:** COMPLETED
+
 ## Overview
 This phase defines the interface for all Executors and implements the concrete classes. It shifts from "Function that returns string" to "Context Manager that yields a stream." Crucially, it adds the `recover()` capability for forensic analysis of dead workers.
 

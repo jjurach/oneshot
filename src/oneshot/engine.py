@@ -59,6 +59,7 @@ class OnehotEngine:
         worker_prompt_header: str = "oneshot execution",
         auditor_prompt_header: str = "oneshot auditor",
         reworker_prompt_header: str = "oneshot reworker",
+        keep_log: bool = False,
     ):
         """
         Initialize the OnehotEngine.
@@ -76,6 +77,7 @@ class OnehotEngine:
             worker_prompt_header: Custom header for worker prompts
             auditor_prompt_header: Custom header for auditor prompts
             reworker_prompt_header: Custom header for reworker prompts
+            keep_log: Whether to keep the session log file after successful completion (default: False)
         """
         self.state_machine = state_machine or StateMachine()
         self.executor_worker = executor_worker
@@ -89,6 +91,7 @@ class OnehotEngine:
         self.worker_prompt_header = worker_prompt_header
         self.auditor_prompt_header = auditor_prompt_header
         self.reworker_prompt_header = reworker_prompt_header
+        self.keep_log = keep_log
         self._interrupted = False
         self._setup_signal_handlers()
 
@@ -98,7 +101,12 @@ class OnehotEngine:
             self._interrupted = True
             self.log_debug("Received SIGINT (Ctrl-C), will transition to INTERRUPTED state")
 
-        signal.signal(signal.SIGINT, handle_interrupt)
+        try:
+            signal.signal(signal.SIGINT, handle_interrupt)
+        except ValueError:
+            # Signal handlers can only be set in the main thread
+            # This happens when running in a background thread (e.g. tests)
+            self.log_debug("Warning: Could not set signal handlers (not in main thread)")
 
     def log_debug(self, msg: str):
         """Log debug message if verbose mode is enabled."""
@@ -154,7 +162,20 @@ class OnehotEngine:
                 # Execute action
                 if action.type == ActionType.EXIT:
                     self.log_debug(f"Exiting: {action.payload.get('reason', 'unknown')}")
-                    return self._should_exit_success(current_state)
+                    success = self._should_exit_success(current_state)
+
+                    # Cleanup log file on success if keep_log is False
+                    if success and not self.keep_log:
+                        import os
+                        log_path = self._get_context_value('session_log_path')
+                        if log_path and os.path.exists(log_path):
+                            try:
+                                os.remove(log_path)
+                                self.log_debug(f"Deleted session log: {log_path}")
+                            except OSError as e:
+                                self.log_debug(f"Failed to delete session log: {e}")
+
+                    return success
 
                 elif action.type == ActionType.RUN_WORKER:
                     self._execute_worker(current_state)
@@ -461,7 +482,11 @@ Complete this task:
 
         # Inject iteration context if not first iteration
         if iteration > 0:
-            iteration_context = f"\n\n[Iteration {iteration + 1}/{self.max_iterations}]\nPrevious attempts did not complete the task. Try again with a different approach.\n"
+            # Get feedback from previous iteration
+            last_auditor_result = self.context.get_auditor_result() if self.context else None
+            feedback_text = f"\n\nAUDITOR FEEDBACK:\n{last_auditor_result}" if last_auditor_result else ""
+
+            iteration_context = f"\n\n[Iteration {iteration + 1}/{self.max_iterations}]\nPrevious attempts did not complete the task. Try again with a different approach.{feedback_text}\n"
             return header_template + iteration_context + task
         else:
             return header_template + task
@@ -536,7 +561,7 @@ Respond with ONLY your verdict and a brief explanation."""
                     line_lower = line.lower()
                     if 'done' in line_lower or 'completed' in line_lower:
                         return "done"
-                    elif 'retry' in line_lower or 'incomplete' in line_lower:
+                    elif 'retry' in line_lower or 'incomplete' in line_lower or 'reiterate' in line_lower:
                         return "retry"
                     elif 'impossible' in line_lower or 'cannot' in line_lower:
                         return "impossible"

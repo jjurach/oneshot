@@ -1,12 +1,14 @@
 """Tests for JSON parsing and extraction functionality."""
 
 import pytest
-from oneshot.oneshot import (
+from oneshot.utils.json_parsing import (
     extract_json,
-    parse_json_verdict,
-    parse_lenient_verdict,
     contains_completion_indicators,
     extract_lenient_json
+)
+from oneshot.utils.verdict_parsing import (
+    parse_json_verdict,
+    parse_lenient_verdict
 )
 
 

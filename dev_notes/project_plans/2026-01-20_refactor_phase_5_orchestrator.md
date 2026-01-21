@@ -1,5 +1,7 @@
 # Project Plan: Core Architecture Refactoring - Phase 5: The Orchestrator
 
+**Status:** COMPLETED
+
 ## Overview
 This final phase implements the `OnehotEngine` which ties all the components together. It replaces the imperative `run_oneshot` function with a main loop that delegates decisions to the State Machine and execution to the Executors/Pipeline.
 

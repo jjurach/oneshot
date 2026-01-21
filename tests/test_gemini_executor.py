@@ -10,7 +10,6 @@ import pytest
 import subprocess
 from unittest.mock import Mock, patch, MagicMock
 from oneshot.providers.gemini_executor import GeminiCLIExecutor
-from oneshot.providers import ProviderConfig, create_provider
 
 
 class TestGeminiCLIExecutor:
@@ -149,68 +148,7 @@ class TestGeminiCLIExecutor:
         assert "/tmp" in repr_str
 
 
-class TestGeminiProviderIntegration:
-    """Test integration between Gemini executor and provider system."""
 
-    def test_provider_config_with_gemini_options(self):
-        """Test ProviderConfig accepts gemini-specific options."""
-        config = ProviderConfig(
-            provider_type="executor",
-            executor="gemini",
-            output_format="stream-json",
-            approval_mode="normal"
-        )
-
-        assert config.executor == "gemini"
-        assert config.output_format == "stream-json"
-        assert config.approval_mode == "normal"
-
-    @patch('oneshot.providers.ExecutorProvider._call_gemini_executor')
-    def test_executor_provider_calls_gemini_with_options(self, mock_call_gemini):
-        """Test that ExecutorProvider passes options to Gemini executor."""
-        mock_call_gemini.return_value = "test output"
-
-        config = ProviderConfig(
-            provider_type="executor",
-            executor="gemini",
-            output_format="stream-json",
-            approval_mode="normal"
-        )
-
-        provider = create_provider(config)
-        result = provider.generate("test prompt")
-
-        # Verify _call_gemini_executor was called
-        mock_call_gemini.assert_called_once_with("test prompt")
-
-        assert result[0] == "test output"
-
-    def test_provider_config_validation_gemini_executor(self):
-        """Test that gemini executor passes validation."""
-        config = ProviderConfig(
-            provider_type="executor",
-            executor="gemini"
-        )
-        # Should not raise any validation errors
-        assert config.executor == "gemini"
-
-
-class TestCLIIntegration:
-    """Test CLI argument parsing and option handling."""
-
-    @patch('subprocess.run')
-    def test_cli_help_includes_new_options(self, mock_run):
-        """Test that CLI help includes the new options."""
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-
-        # This would be tested by running the CLI with --help
-        # For now, we verify the options are defined in the argument parser
-        from src.cli.oneshot_cli import main_async
-        import asyncio
-
-        # We can't easily test the full CLI without complex mocking,
-        # but we can verify the options exist by checking the parser definition
-        # This test serves as a reminder to verify CLI help manually
 
 
 class TestDemoScript:

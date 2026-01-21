@@ -176,26 +176,41 @@ def log_activity(
     filepath: str
 ) -> Generator[TimestampedActivity, None, None]:
     """
-    Log activities to file in NDJSON format and pass through.
+    Log activities to file in NDJSON format (or Markdown if .md) and pass through.
 
     This is a pass-through generator with a side effect: each item is serialized
-    to JSON and appended to the log file with a newline (NDJSON format). The file
-    is flushed after each write to ensure durability.
+    to JSON or Markdown and appended to the log file. The file is flushed after
+    each write to ensure durability.
 
     Args:
         stream: Generator yielding TimestampedActivity objects
-        filepath: Path to NDJSON log file
+        filepath: Path to log file
 
     Yields:
         Items from stream unchanged
     """
+    is_markdown = filepath.endswith('.md')
+
     try:
         with open(filepath, 'a') as f:
             for item in stream:
-                # Serialize to NDJSON
-                activity_dict = asdict(item)
-                json_line = json.dumps(activity_dict, default=str)
-                f.write(json_line + "\n")
+                if is_markdown:
+                    # Simple markdown formatting
+                    timestamp_str = datetime.fromtimestamp(item.timestamp).strftime('%H:%M:%S')
+                    executor_str = f"[{item.executor}]" if item.executor else ""
+                    # Handle data types
+                    data_str = str(item.data).strip()
+                    # Escape backticks in data to avoid breaking markdown code blocks
+                    # But if it's already code, we might want to preserve it.
+                    # Simple approach: just write it as text line with metadata
+                    line = f"`{timestamp_str}` **{executor_str}** {data_str}\n\n"
+                    f.write(line)
+                else:
+                    # Serialize to NDJSON
+                    activity_dict = asdict(item)
+                    json_line = json.dumps(activity_dict, default=str)
+                    f.write(json_line + "\n")
+                
                 f.flush()
                 yield item
     except IOError as e:

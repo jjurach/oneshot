@@ -2,7 +2,7 @@
 
 import pytest
 import subprocess
-from oneshot.oneshot import call_executor_pty
+from oneshot.providers.pty_utils import call_executor_pty
 import platform
 
 
