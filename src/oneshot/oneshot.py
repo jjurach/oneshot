@@ -211,7 +211,7 @@ def call_executor_pty(cmd: List[str], input_data: Optional[str] = None,
                                         flush_reason = f"size limit reached ({buffer_total_bytes} >= {accumulation_buffer_size} bytes)"
                                         log_debug(f"[PTY FLUSH TRIGGER] {flush_reason}")
                                     # Flush on complete lines (good boundary for text output)
-                                    elif '\n' in chunk_text and buffer_total_bytes > 100:
+                                    elif '\n' in chunk_text and buffer_total_bytes > 0:
                                         should_flush = True
                                         flush_reason = "line boundary detected"
                                         log_debug(f"[PTY FLUSH TRIGGER] {flush_reason} (buffer: {buffer_total_bytes} bytes)")
