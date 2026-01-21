@@ -232,8 +232,10 @@ class GeminiCLIExecutor(BaseExecutor):
         """
         Parse Gemini's output into structured results.
 
-        Gemini outputs action/observation/error patterns. This method filters
-        lines containing these keywords and extracts meaningful activity.
+        Handles Gemini's stream-json format which outputs JSON objects with types:
+        - "init": Session initialization
+        - "message": User/assistant messages with streaming deltas
+        - "result": Final result with statistics
 
         Args:
             raw_output (str): Raw output from Gemini CLI
@@ -241,34 +243,83 @@ class GeminiCLIExecutor(BaseExecutor):
         Returns:
             Tuple[str, Dict[str, Any]]: (stdout_summary, auditor_details)
         """
+        import json
+
         # Strip ANSI color codes
         clean_output = self._strip_ansi_colors(raw_output)
 
-        # Filter log to focus on "Action", "Observation", and "Error" steps
-        filtered_lines = [
-            line for line in clean_output.split('\n')
-            if re.search(r'\b(Action|Observation|Error):', line)
-        ]
-        filtered_output = '\n'.join(filtered_lines)
+        # Parse stream-json format
+        lines = clean_output.split('\n')
 
-        # Parse activity patterns
-        actions = [line for line in filtered_lines if re.search(r'\bAction:', line)]
-        observations = [line for line in filtered_lines if re.search(r'\bObservation:', line)]
-        errors = [line for line in filtered_lines if re.search(r'\bError:', line)]
+        # Separate informational lines from JSON lines
+        info_lines = []
+        json_lines = []
+        json_objects = []
 
-        # Prepare auditor details
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Try to parse as JSON (Gemini's stream-json format)
+            if line.startswith('{'):
+                try:
+                    obj = json.loads(line)
+                    json_objects.append(obj)
+                    json_lines.append(line)
+                except json.JSONDecodeError:
+                    # Not valid JSON, treat as info
+                    info_lines.append(line)
+            else:
+                # Regular info line (e.g., "YOLO mode is enabled...", "Loaded cached credentials...")
+                info_lines.append(line)
+
+        # Extract assistant message content
+        assistant_content = []
+        final_result = None
+        message_count = 0
+
+        for obj in json_objects:
+            obj_type = obj.get('type')
+
+            if obj_type == 'message' and obj.get('role') == 'assistant':
+                content = obj.get('content', '').strip()
+                if content:
+                    assistant_content.append(content)
+                message_count += 1
+            elif obj_type == 'result':
+                final_result = obj
+
+        # Combine assistant messages into summary
+        stdout_summary = ' '.join(assistant_content) if assistant_content else ''
+
+        # Include info lines in summary if no JSON messages found
+        if not assistant_content and info_lines:
+            stdout_summary = '\n'.join(info_lines)
+
+        # Prepare auditor details with stream-json information
         auditor_details = {
             "executor_type": "gemini",
-            "action_count": len(actions),
-            "observation_count": len(observations),
-            "error_count": len(errors),
-            "actions": actions,
-            "observations": observations,
-            "errors": errors,
-            "raw_output_length": len(raw_output)
+            "format": "stream-json",
+            "message_count": message_count,
+            "assistant_messages": assistant_content,
+            "raw_output_length": len(raw_output),
+            "json_objects_count": len(json_objects),
+            "info_lines": info_lines,
         }
 
-        return filtered_output, auditor_details
+        # Add result statistics if available
+        if final_result:
+            stats = final_result.get('stats', {})
+            auditor_details['final_status'] = final_result.get('status', 'unknown')
+            auditor_details['result_stats'] = {
+                'total_tokens': stats.get('total_tokens'),
+                'input_tokens': stats.get('input_tokens'),
+                'output_tokens': stats.get('output_tokens'),
+                'duration_ms': stats.get('duration_ms'),
+            }
+
+        return stdout_summary, auditor_details
 
     def run_task(self, task: str) -> ExecutionResult:
         """

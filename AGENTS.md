@@ -80,6 +80,28 @@ General references to "planning" e.g. "plan this" or "Start thinking about next 
 - **Status**: Plan created, awaiting approval
 - **Complexity**: Medium (systematic review and validation task)
 
+#### Gemini Executor Diagnostics & JSON Stream Formatting
+**Source**: `dev_notes/requests/prompt-16.5.md`
+**Detailed Plan**: `dev_notes/project_plans/2026-01-21_01-43-44_gemini-executor-diagnostics.md`
+
+- **Objective**: Diagnose and fix the Gemini executor's JSON stream formatting to ensure it correctly parses and processes streaming output from the gemini-cli tool using actual Gemini internal test data
+- **Key Deliverables**:
+  - Analysis of Gemini internal file structure from `tmp/test-cases/gemini2/notes.md`
+  - Identification of JSON stream formatting discrepancies
+  - Debug instrumentation in gemini_executor for stream parsing
+  - Corrected JSON stream formatting in parse_activity() method
+  - Accurate resultSummary generation for auditor
+  - Validation that output matches gemini-cli native format
+- **Implementation Phases**:
+  1. Diagnostic gathering (review test data, compare formats)
+  2. Test execution & data collection (run diagnostic commands)
+  3. Root cause analysis (document JSON formatting issues)
+  4. Debugging & instrumentation (add verbose logging)
+  5. Fix implementation (correct stream parsing)
+  6. Validation & testing (verify fixes, run test suite)
+- **Status**: Plan created, awaiting approval
+- **Complexity**: Medium (diagnostics and targeted fixes to gemini_executor)
+
 #### Executor Abstraction Refactor
 **Source**: `dev_notes/requests/prompt-11.md`
 **Detailed Plan**: `dev_notes/project_plans/2026-01-20_08-27-00_executor-abstraction-refactor.md`
