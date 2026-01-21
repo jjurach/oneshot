@@ -434,115 +434,69 @@ class OnehotEngine:
 
     def _generate_worker_prompt(self, iteration: int) -> str:
         """
-        Generate the prompt for the worker agent.
+        Generate the prompt for the worker agent by delegating to the executor.
 
         Args:
             iteration: Current iteration number (0-indexed)
 
         Returns:
-            The worker prompt with context injected
+            The worker prompt formatted by the executor
         """
+        if not self.executor_worker:
+            raise ValueError("No worker executor configured")
+
         # Get base task from context
         task = self._get_context_value('task', 'Undefined task')
 
-        # Use reworker header if this is a reiteration (retry after auditor feedback)
+        # Determine role based on iteration
         is_reiteration = self._get_context_value('is_reiteration', False)
+        role = "reworker" if is_reiteration else "worker"
+
+        # Use appropriate header
         header = self.reworker_prompt_header if is_reiteration else self.worker_prompt_header
 
-        # Build the worker prompt with header template
-        header_template = f"""{header}
+        # Build context dictionary
+        context = {
+            'iteration': iteration,
+            'max_iterations': self.max_iterations
+        }
 
-IMPORTANT: Provide your final answer in valid JSON format when possible. Include completion indicators like "DONE", "success", or "status" even in non-JSON responses.
-
-PREFERRED FORMAT (valid JSON):
-{{
-  "status": "DONE",
-  "result": "<your answer/output here>",
-  "confidence": "<high/medium/low>",
-  "validation": "<how you verified this answer - sources, output shown, reasoning explained>",
-  "execution_proof": "<what you actually did - optional if no external tools were used>"
-}}
-
-ALTERNATIVE: If JSON is difficult, include clear completion indicators:
-- Words like "DONE", "success", "completed", "finished"
-- Status/result fields even in malformed JSON
-- Clear indication that the task is complete
-
-IMPORTANT GUIDANCE:
-- "result" should be your final answer
-- "validation" should describe HOW you got it (tools used, sources checked, actual output if execution)
-- "execution_proof" is optional - only include if you used external tools, commands, or computations
-- For knowledge-based answers: brief validation is sufficient
-- For coding tasks: describe the changes made
-- Be honest and specific - don't make up results
-- Set "status" to "DONE" or use completion words when you believe the task is completed
-
-Complete this task:
-"""
-
-        # Inject iteration context if not first iteration
+        # Add auditor feedback if this is a reiteration
         if iteration > 0:
-            # Get feedback from previous iteration
             last_auditor_result = self.context.get_auditor_result() if self.context else None
-            feedback_text = f"\n\nAUDITOR FEEDBACK:\n{last_auditor_result}" if last_auditor_result else ""
+            if last_auditor_result:
+                context['auditor_feedback'] = last_auditor_result
 
-            iteration_context = f"\n\n[Iteration {iteration + 1}/{self.max_iterations}]\nPrevious attempts did not complete the task. Try again with a different approach.{feedback_text}\n"
-            return header_template + iteration_context + task
-        else:
-            return header_template + task
+        # Delegate prompt generation to the executor
+        return self.executor_worker.format_prompt(task, role, header, context)
 
     def _generate_auditor_prompt(self) -> str:
         """
-        Generate the prompt for the auditor agent.
+        Generate the prompt for the auditor agent by delegating to the executor.
 
         Returns:
-            The auditor prompt with context and work results injected
+            The auditor prompt formatted by the executor
         """
-        # Extract the best result from logs
-        log_path = self._get_context_value('session_log_path', 'oneshot-log.json')
-        result = self.result_extractor.extract_result(log_path)
+        if not self.executor_auditor:
+            raise ValueError("No auditor executor configured")
 
-        if not result:
-            result = "(No worker output found)"
-
+        # Get base task from context
         task = self._get_context_value('task', 'Undefined task')
 
-        # Build auditor prompt with header template
-        header_template = f"""{self.auditor_prompt_header}
+        # Extract the best result from logs for context
+        log_path = self._get_context_value('session_log_path', 'oneshot-log.json')
+        worker_result = self.result_extractor.extract_result(log_path)
 
-You are a Success Auditor. Evaluate the worker's response with TRUST by default, accepting both valid JSON and responses with clear completion indicators.
+        if not worker_result:
+            worker_result = "(No worker output found)"
 
-The original task and project context should guide your evaluation of what "DONE" means. Be lenient and trust the worker's judgment unless there are clear, serious issues.
+        # Build context dictionary with worker result
+        context = {
+            'worker_result': worker_result
+        }
 
-ACCEPT responses that show clear completion intent:
-- Valid JSON with "status": "DONE" or similar
-- Malformed JSON with completion words like "success", "completed", "finished"
-- Plain text with clear completion indicators
-- Any response that reasonably addresses the task
-
-Only reject if there are REAL, significant issues:
-1. Does the response show clear completion intent? (reject only if completely unclear)
-2. Does the result seem reasonable for the task? (reject only if completely implausible)
-3. Is there any indication of task completion? (reject only if entirely missing)
-
-Make your decision based on the task, work result, and these guidelines:
-
-"""
-
-        prompt = header_template + f"""TASK:
-{task}
-
-WORK RESULT:
-{result}
-
-Your verdict must be one of:
-- "DONE": The task has been completed successfully.
-- "RETRY": The task is incomplete. Ask the worker to try again.
-- "IMPOSSIBLE": The task cannot be completed (missing resources, permissions denied, etc.).
-
-Respond with ONLY your verdict and a brief explanation."""
-
-        return prompt
+        # Delegate prompt generation to the executor
+        return self.executor_auditor.format_prompt(task, "auditor", self.auditor_prompt_header, context)
 
     def _extract_auditor_verdict(self) -> str:
         """

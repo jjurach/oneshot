@@ -17,12 +17,24 @@ This document outlines the location of key project components and implementation
 
 | Executor | File | Description |
 |----------|------|-------------|
-| **Base** | `base.py` | Base abstract executor class. |
-| **Cline** | `cline_executor.py` | Integration with Cline VS Code extension. |
-| **Claude** | `claude_executor.py` | Integration with Anthropic's Claude CLI. |
-| **Gemini** | `gemini_executor.py` | Integration with Google Gemini CLI. |
-| **Aider** | `aider_executor.py` | Integration with Aider CLI. |
-| **Direct** | `direct_executor.py` | Direct API execution (OpenAI-compatible). |
+| **Base** | `base.py` | Base abstract executor class with default prompt generation. |
+| **Cline** | `cline_executor.py` | Integration with Cline VS Code extension (Markdown prompts). |
+| **Claude** | `claude_executor.py` | Integration with Anthropic's Claude CLI (XML prompts). |
+| **Gemini** | `gemini_executor.py` | Integration with Google Gemini CLI (XML prompts). |
+| **Aider** | `aider_executor.py` | Integration with Aider CLI (XML prompts). |
+| **Direct** | `direct_executor.py` | Direct API execution (OpenAI-compatible, XML prompts). |
+
+### Prompt Generation
+
+Each executor implements its own prompt generation strategy:
+
+- **BaseExecutor**: Default XML-based prompts for backward compatibility.
+- **ClineExecutor**: Markdown-based prompts to avoid conflicts with Cline's internal prompt structure.
+- **Other Executors**: Inherit XML-based prompts from BaseExecutor.
+
+**Key Methods:**
+- `get_system_instructions(role: str)`: Returns role-specific system instructions.
+- `format_prompt(task: str, role: str, header: str, context: dict)`: Formats complete prompts.
 
 ## Core Logic
 

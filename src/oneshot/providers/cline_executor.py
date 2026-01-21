@@ -381,3 +381,145 @@ class ClineExecutor(BaseExecutor):
             return f"event_{json_object.get('event', 'unknown')}"
 
         return "unknown_activity"
+
+    def get_system_instructions(self, role: str) -> str:
+        """
+        Get system instructions for a specific role using Markdown format.
+
+        ClineExecutor uses Markdown-based instructions instead of XML to avoid
+        conflicts with Cline's internal prompt structure and tool usage patterns.
+
+        Args:
+            role (str): Role type ("worker", "auditor", or "reworker")
+
+        Returns:
+            str: Markdown-formatted system instructions for the specified role
+        """
+        if role == "worker":
+            return """You are an autonomous intelligent agent. Complete the task described below.
+
+Focus on fulfilling the requirements described in the task. Be direct and practical in your approach."""
+        elif role == "auditor":
+            return """You are a Success Auditor. Evaluate the worker's response with trust by default, accepting both structured and plain text responses with clear completion indicators.
+
+The original task and project context should guide your evaluation of what "DONE" means. Be lenient and trust the worker's judgment unless there are clear, serious issues.
+
+Accept responses that show clear completion intent:
+- Clear completion indicators like "DONE", "success", "completed", "finished"
+- Any response that reasonably addresses the task
+
+Only reject if there are REAL, significant issues:
+1. Does the response show clear completion intent? (reject only if completely unclear)
+2. Does the result seem reasonable for the task? (reject only if completely implausible)
+3. Is there any indication of task completion? (reject only if entirely missing)"""
+        elif role == "reworker":
+            return """You are an autonomous intelligent agent. The previous attempt to complete the task was marked as incomplete. Review the feedback below and re-attempt the task, ensuring you address the concerns raised.
+
+Focus on fulfilling the requirements described in the task. Be direct and practical in your approach."""
+        else:
+            raise ValueError(f"Unknown role: {role}")
+
+    def format_prompt(self, task: str, role: str, header: Optional[str] = None, context: Optional[Dict] = None) -> str:
+        """
+        Format a complete prompt for Cline using Markdown structure.
+
+        Uses clean Markdown formatting instead of XML to be compatible with Cline's
+        internal prompt structure and tool usage patterns.
+
+        Args:
+            task (str): The main task description
+            role (str): Role type ("worker", "auditor", or "reworker")
+            header (Optional[str]): Custom header for the prompt
+            context (Optional[Dict]): Context dictionary containing iteration info, feedback, etc.
+
+        Returns:
+            str: Markdown-formatted prompt string
+        """
+        context = context or {}
+        system_instructions = self.get_system_instructions(role)
+
+        if role == "worker" or role == "reworker":
+            return self._format_cline_worker_prompt(task, role, header, context, system_instructions)
+        elif role == "auditor":
+            return self._format_cline_auditor_prompt(task, header, context, system_instructions)
+        else:
+            raise ValueError(f"Unknown role: {role}")
+
+    def _format_cline_worker_prompt(self, task: str, role: str, header: str, context: Dict, system_instructions: str) -> str:
+        """Format worker/reworker prompt with Markdown structure for Cline."""
+        header = header or "Oneshot Task"
+
+        prompt_parts = [
+            f"# {header}",
+            "",
+            system_instructions,
+            "",
+            "## Important Guidance",
+            "",
+            "Start your final response with '## Final Result' followed by your completed work.",
+            "",
+            "Be direct and practical. Complete the task thoroughly and indicate when you're done.",
+            ""
+        ]
+
+        # Add iteration context if applicable
+        iteration = context.get('iteration', 0)
+        max_iterations = context.get('max_iterations', 5)
+        auditor_feedback = context.get('auditor_feedback')
+
+        if iteration > 0 and auditor_feedback:
+            prompt_parts.extend([
+                "## Context",
+                "",
+                f"Iteration: {iteration + 1}/{max_iterations}",
+                "",
+                f"Feedback: {auditor_feedback}",
+                "",
+                "Previous attempts did not complete the task. Try a different approach.",
+                ""
+            ])
+        else:
+            prompt_parts.extend([
+                "## Context",
+                "",
+                "This is the initial attempt to complete the task.",
+                ""
+            ])
+
+        prompt_parts.extend([
+            "## Task",
+            "",
+            task
+        ])
+
+        return "\n".join(prompt_parts)
+
+    def _format_cline_auditor_prompt(self, task: str, header: str, context: Dict, system_instructions: str) -> str:
+        """Format auditor prompt with Markdown structure for Cline."""
+        header = header or "Success Audit"
+        worker_result = context.get('worker_result', '(No worker output found)')
+
+        prompt_parts = [
+            f"# {header}",
+            "",
+            system_instructions,
+            "",
+            "## Task",
+            "",
+            task,
+            "",
+            "## Work Result",
+            "",
+            worker_result,
+            "",
+            "## Evaluation",
+            "",
+            "Respond with ONLY your verdict and a brief explanation.",
+            "",
+            "Your verdict must be one of:",
+            "- DONE: The task has been completed successfully.",
+            "- RETRY: The task is incomplete. Ask the worker to try again.",
+            "- IMPOSSIBLE: The task cannot be completed."
+        ]
+
+        return "\n".join(prompt_parts)

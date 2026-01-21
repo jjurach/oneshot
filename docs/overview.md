@@ -131,6 +131,21 @@ Oneshot is designed to provide real-time streaming updates from agent execution 
 
 For complete details, see **streaming-and-state-management.md**.
 
+### Prompt Generation System
+
+Oneshot uses a decentralized prompt generation architecture where each executor defines its own prompt format and strategy:
+
+- **BaseExecutor**: Provides default XML-based prompts for backward compatibility
+- **ClineExecutor**: Uses Markdown-based prompts to avoid conflicts with Cline's internal prompt structure
+- **Other Executors**: Inherit XML-based prompts from BaseExecutor
+
+**Key Features:**
+- Role-based instructions (worker, auditor, reworker)
+- Context-aware formatting (iteration count, feedback, task results)
+- Executor-specific dialects (XML vs Markdown)
+
+For implementation details, see **project-structure.md**.
+
 ### Activity Log Format
 
 Each executor's activity is captured in real-time as NDJSON (newline-delimited JSON):

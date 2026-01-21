@@ -3,6 +3,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Tuple, Generator
 
+from ..constants import WORKER_SYSTEM_PROMPT, AUDITOR_SYSTEM_PROMPT, REWORKER_SYSTEM_PROMPT
+
 @dataclass
 class RecoveryResult:
     """
@@ -202,3 +204,123 @@ class BaseExecutor(ABC):
         import re
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         return ansi_escape.sub('', text)
+
+    def get_system_instructions(self, role: str) -> str:
+        """
+        Get system instructions for a specific role.
+
+        Default implementation provides XML-based instructions for backward compatibility.
+
+        Args:
+            role (str): Role type ("worker", "auditor", or "reworker")
+
+        Returns:
+            str: System instructions for the specified role
+        """
+        if role == "worker":
+            return WORKER_SYSTEM_PROMPT
+        elif role == "auditor":
+            return AUDITOR_SYSTEM_PROMPT
+        elif role == "reworker":
+            return REWORKER_SYSTEM_PROMPT
+        else:
+            raise ValueError(f"Unknown role: {role}")
+
+    def format_prompt(self, task: str, role: str, header: Optional[str] = None, context: Optional[Dict] = None) -> str:
+        """
+        Format a complete prompt for the executor.
+
+        Default implementation provides XML-based formatting for backward compatibility.
+
+        Args:
+            task (str): The main task description
+            role (str): Role type ("worker", "auditor", or "reworker")
+            header (Optional[str]): Custom header for the prompt
+            context (Optional[Dict]): Context dictionary containing iteration info, feedback, etc.
+
+        Returns:
+            str: Formatted prompt string
+        """
+        context = context or {}
+        system_instructions = self.get_system_instructions(role)
+
+        if role == "worker" or role == "reworker":
+            return self._format_worker_prompt(task, role, header, context, system_instructions)
+        elif role == "auditor":
+            return self._format_auditor_prompt(task, header, context, system_instructions)
+        else:
+            raise ValueError(f"Unknown role: {role}")
+
+    def _format_worker_prompt(self, task: str, role: str, header: str, context: Dict, system_instructions: str) -> str:
+        """Format worker/reworker prompt with XML structure."""
+        header = header or "oneshot execution"
+
+        # Build header with completion guidance
+        header_template = f"""{header}
+
+IMPORTANT: Provide your final answer in valid JSON format when possible. Include completion indicators like "DONE", "success", or "status" even in non-JSON responses.
+
+PREFERRED FORMAT (valid JSON):
+{{
+  "status": "DONE",
+  "result": "<your answer/output here>",
+  "confidence": "<high/medium/low>",
+  "validation": "<how you verified this answer - sources, output shown, reasoning explained>",
+  "execution_proof": "<what you actually did - optional if no external tools were used>"
+}}
+
+ALTERNATIVE: If JSON is difficult, include clear completion indicators:
+- Words like "DONE", "success", "completed", "finished"
+- Status/result fields even in malformed JSON
+- Clear indication that the task is complete
+
+IMPORTANT GUIDANCE:
+- "result" should be your final answer
+- "validation" should describe HOW you got it (tools used, sources checked, actual output if execution)
+- "execution_proof" is optional - only include if you used external tools, commands, or computations
+- For knowledge-based answers: brief validation is sufficient
+- For coding tasks: describe the changes made
+- Be honest and specific - don't make up results
+- Set "status" to "DONE" or use completion words when you believe the task is completed
+
+"""
+
+        # Add iteration context if applicable
+        iteration = context.get('iteration', 0)
+        max_iterations = context.get('max_iterations', 5)
+        auditor_feedback = context.get('auditor_feedback')
+
+        if iteration > 0 and auditor_feedback:
+            iteration_context = f"""\n\n[Iteration {iteration + 1}/{max_iterations}]\nPrevious attempts did not complete the task. Try again with a different approach.
+
+AUDITOR FEEDBACK:
+{auditor_feedback}
+"""
+            return header_template + iteration_context + f"\nComplete this task:\n{task}"
+        else:
+            return header_template + f"Complete this task:\n{task}"
+
+    def _format_auditor_prompt(self, task: str, header: str, context: Dict, system_instructions: str) -> str:
+        """Format auditor prompt with XML structure."""
+        header = header or "oneshot auditor"
+
+        worker_result = context.get('worker_result', '(No worker output found)')
+
+        prompt = f"""{header}
+
+{system_instructions}
+
+TASK:
+{task}
+
+WORK RESULT:
+{worker_result}
+
+Your verdict must be one of:
+- "DONE": The task has been completed successfully.
+- "RETRY": The task is incomplete. Ask the worker to try again.
+- "IMPOSSIBLE": The task cannot be completed (missing resources, permissions denied, etc.).
+
+Respond with ONLY your verdict and a brief explanation."""
+
+        return prompt
