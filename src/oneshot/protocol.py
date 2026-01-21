@@ -25,6 +25,9 @@ class ResultSummary:
     def __bool__(self):
         return bool(self.result)
 
+    def __str__(self):
+        return self.result
+
 
 class ResultExtractor:
     """
@@ -179,6 +182,14 @@ class ResultExtractor:
         if 'INTERVENTION' in text_upper:
             score += self.score_weights['intervention_keyword']
 
+        # Penalize API logging entries (they shouldn't be considered results)
+        if '"request"' in text or '"tokensIn"' in text or '"tokensOut"' in text:
+            score -= 20  # Heavy penalty for API logging
+
+        # Penalize prompt/setup text (prefer actual results)
+        if 'You are an autonomous' in text or 'Complete the task' in text or '## Important Guidance' in text:
+            score -= 15  # Heavy penalty for prompt text
+
         # JSON patterns
         if '{' in text and '}' in text:
             score += self.score_weights['json_structure']
@@ -204,73 +215,7 @@ class ResultExtractor:
 
         return score
 
-    def _format_event(self, event: Dict[str, Any]) -> Optional[str]:
-        """
-        Format an event object into a text representation.
 
-        Args:
-            event: A parsed JSON event from the log
-
-        Returns:
-            Formatted text, or None if the event is not useful
-        """
-        # Extract text from various possible event structures
-        if isinstance(event, dict):
-            # Check for common output fields
-            for field_name in ['output', 'stdout', 'text', 'content', 'message', 'data']:
-                if field_name in event and event[field_name]:
-                    return str(event[field_name])
-
-            # If event has no clear output field, stringify it
-            if event:
-                try:
-                    return json.dumps(event, indent=2)
-                except (TypeError, ValueError):
-                    return str(event)
-
-        return None
-
-    def _score_text(self, text: str) -> int:
-        """
-        Score a text candidate based on heuristics.
-
-        Args:
-            text: The candidate text to score
-
-        Returns:
-            A score (higher is better). 0 means not relevant.
-        """
-        if not text or not isinstance(text, str):
-            return 0
-
-        score = 0
-
-        # Check for "DONE" keyword (strong signal of completion)
-        if 'DONE' in text.upper():
-            score += self.score_weights['done_keyword']
-
-        # Check for JSON structure (structured output is more reliable)
-        if '{' in text and '}' in text:
-            score += self.score_weights['json_structure']
-            try:
-                json.loads(text)
-                score += 2  # Valid JSON bonus
-            except json.JSONDecodeError:
-                pass
-
-        # Check for "status" field (indicates structured response)
-        if '"status"' in text or "'status'" in text:
-            score += self.score_weights['status_field']
-
-        # Check for "result" field
-        if '"result"' in text or "'result'" in text:
-            score += self.score_weights['result_field']
-
-        # Check for substantial length (avoid empty/trivial messages)
-        if len(text) > 50:
-            score += self.score_weights['substantial_length']
-
-        return score
 
 
 class PromptGenerator:

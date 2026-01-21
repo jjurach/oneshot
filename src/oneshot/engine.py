@@ -193,16 +193,16 @@ class OnehotEngine:
                     self.log_debug(f"Exiting: {action.payload.get('reason', 'unknown')}")
                     success = self._should_exit_success(current_state)
 
-                    # Cleanup log file on success if keep_log is False
-                    if success and not self.keep_log:
-                        import os
-                        log_path = self._get_context_value('session_log_path')
-                        if log_path and os.path.exists(log_path):
-                            try:
-                                os.remove(log_path)
-                                self.log_debug(f"Deleted session log: {log_path}")
-                            except OSError as e:
-                                self.log_debug(f"Failed to delete session log: {e}")
+                    # Never delete session logs - they are valuable for debugging
+                    # if success and not self.keep_log:
+                    #     import os
+                    #     log_path = self._get_context_value('session_log_path')
+                    #     if log_path and os.path.exists(log_path):
+                    #         try:
+                    #             os.remove(log_path)
+                    #             self.log_debug(f"Deleted session log: {log_path}")
+                    #         except OSError as e:
+                    #             self.log_debug(f"Failed to delete session log: {e}")
 
                     return success
 
@@ -332,6 +332,7 @@ class OnehotEngine:
         # Execute auditor with streaming pipeline
         try:
             prompt = self._generate_auditor_prompt()
+            self.log_debug(f"Auditor prompt generated ({len(prompt)} chars)")
 
             self._pump_pipeline(
                 self.executor_auditor,
@@ -450,8 +451,15 @@ class OnehotEngine:
             # Build and execute the complete pipeline
             # Determine log path with oneshot_id if available
             oneshot_id = self._get_context_value('oneshot_id')
-            default_log = f"{oneshot_id}-oneshot-log.json" if oneshot_id else 'oneshot-log.json'
+            # Strip the "oneshot_" prefix if present to avoid duplication
+            log_prefix = oneshot_id.replace("oneshot_", "") if oneshot_id and oneshot_id.startswith("oneshot_") else oneshot_id
+            default_log = f"{log_prefix}-oneshot-log.json" if log_prefix else 'oneshot-log.json'
             log_path = self._get_context_value('session_log_path', default_log)
+
+            # Store the resolved log path in context so other methods can find it
+            if self.context:
+                self.context.set_metadata('session_log_path', log_path)
+                self.context.save()
 
             pipeline = build_pipeline(
                 stream,
@@ -519,10 +527,14 @@ class OnehotEngine:
 
         # Extract the best result from logs for context
         log_path = self._get_context_value('session_log_path', 'oneshot-log.json')
-        worker_result = self.result_extractor.extract_result(log_path)
+        worker_result_summary = self.result_extractor.extract_result(log_path)
 
-        if not worker_result:
+        if not worker_result_summary:
             worker_result = "(No worker output found)"
+            self.log_debug(f"No worker result found in log: {log_path}")
+        else:
+            worker_result = worker_result_summary.result
+            self.log_debug(f"Extracted worker result (score: {worker_result_summary.score}): {worker_result[:200]}{'...' if len(worker_result) > 200 else ''}")
 
         # Build context dictionary with worker result
         context = {

@@ -123,7 +123,7 @@ def _load_or_create_context(resume: bool, session_file: Optional[Path], task_pro
 
 def _print_pipeline_event(event: dict):
     """
-    Simple callback to print pipeline events to stdout.
+    Format and print pipeline events to stdout in a readable format.
 
     Args:
         event (dict): The event dictionary from the pipeline
@@ -133,8 +133,49 @@ def _print_pipeline_event(event: dict):
 
     data = event.get('data')
     if data:
-        # Print raw data to stdout (usually contains newline)
-        print(data, end='', flush=True)
+        # Format different types of activity data
+        if isinstance(data, str):
+            # Handle string data (like conversation headers)
+            if data.startswith('*') and data.endswith('*'):
+                # Conversation header
+                print(f"\n📝 {data[1:-1]}")
+            else:
+                # Regular text output
+                print(data, end='', flush=True)
+        elif isinstance(data, dict):
+            # Handle structured activity data
+            activity_type = data.get('say', 'unknown')
+            text_content = data.get('text', '')
+
+            # Format based on activity type
+            if activity_type == 'text':
+                # Regular text output from agent
+                print(text_content, end='', flush=True)
+            elif activity_type == 'reasoning':
+                # Agent reasoning/thinking
+                print(f"\n🤔 {text_content}")
+            elif activity_type == 'checkpoint_created':
+                # Checkpoint marker
+                print(f"\n📌 Checkpoint saved")
+            elif activity_type == 'completion_result':
+                # Final result
+                print(f"\n✅ {text_content}")
+            elif activity_type == 'api_req_started':
+                # API request (less verbose)
+                if text_content and len(text_content) > 100:
+                    truncated = text_content[:100] + "..."
+                    print(f"\n🔄 API request: {truncated}")
+                else:
+                    print(f"\n🔄 API request initiated")
+            else:
+                # Unknown activity type - show as generic activity
+                print(f"\n📋 Activity ({activity_type}): {text_content[:100]}{'...' if len(text_content) > 100 else ''}")
+        else:
+            # Fallback for other data types
+            print(f"\n📄 {str(data)}")
+
+        # Ensure at least one newline after each activity
+        print("", flush=True)
 
 
 # ============================================================================
