@@ -9,67 +9,200 @@ This module provides:
 import json
 from typing import List, Tuple, Optional, Dict, Any
 import re
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ResultSummary:
+    """
+    Summary of the best result and its context from activity logs.
+    """
+    result: str
+    leading_context: List[str] = field(default_factory=list)
+    trailing_context: List[str] = field(default_factory=list)
+    score: int = 0
+
+    def __bool__(self):
+        return bool(self.result)
 
 
 class ResultExtractor:
     """
-    Extracts "Full Text" results from activity logs.
+    Extracts "Full Text" results from activity logs using fuzzy scoring and context capture.
 
     Processes noisy log streams and identifies high-quality output by
-    scoring candidates based on heuristics (presence of "DONE", JSON structure, etc.).
+    scoring candidates based on heuristics (presence of "DONE", "STATUS", JSON structure, etc.).
     """
 
     def __init__(self):
         """Initialize the result extractor."""
         self.score_weights = {
-            'done_keyword': 10,
+            'done_keyword': 15,
+            'status_keyword': 10,
+            'success_keyword': 10,
             'json_structure': 5,
+            'json_valid': 5,
             'substantial_length': 3,
             'status_field': 8,
             'result_field': 5,
+            'human_keyword': -10,  # Penalty for human intervention requests
+            'intervention_keyword': -10,
         }
 
-    def extract_result(self, log_path: str) -> Optional[str]:
+    def extract_result(self, log_path: str) -> Optional[ResultSummary]:
         """
-        Extract the best result from a log file.
+        Extract the best result from a log file with surrounding context.
 
         Args:
             log_path: Path to oneshot-log.json (NDJSON format)
 
         Returns:
-            The best scored output text, or None if no valid content found
+            A ResultSummary object, or None if no valid content found
         """
-        candidates: List[Tuple[int, str]] = []
-
+        events = []
         try:
             with open(log_path, 'r') as f:
-                for line_num, line in enumerate(f, 1):
+                for line in f:
                     line = line.strip()
                     if not line:
                         continue
-
                     try:
                         event = json.loads(line)
-                        text = self._format_event(event)
-                        if text:
-                            score = self._score_text(text)
-                            if score > 0:
-                                candidates.append((score, text))
+                        events.append(event)
                     except json.JSONDecodeError:
-                        # Skip malformed JSON lines
                         continue
-
         except FileNotFoundError:
             return None
         except Exception:
             return None
 
-        if not candidates:
+        if not events:
             return None
 
-        # Sort by score (descending) and return the best
-        best_score, best_text = sorted(candidates, reverse=True)[0]
-        return best_text
+        # Format events and score them
+        scored_candidates = []
+        for i, event in enumerate(events):
+            text = self._format_event(event)
+            if text:
+                score = self._score_text(text)
+                if score > 0:
+                    scored_candidates.append((score, i, text))
+
+        if not scored_candidates:
+            # Fallback to last event if nothing scored high
+            best_idx = len(events) - 1
+            best_text = self._format_event(events[best_idx])
+            best_score = 0
+        else:
+            # Sort by score (descending), then by index (latest first for ties)
+            scored_candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            best_score, best_idx, best_text = scored_candidates[0]
+
+        if not best_text:
+            return None
+
+        # Extract context (up to 2 leading, 2 trailing)
+        leading_context = []
+        for i in range(max(0, best_idx - 2), best_idx):
+            ctx_text = self._format_event(events[i])
+            if ctx_text:
+                leading_context.append(ctx_text)
+
+        trailing_context = []
+        for i in range(best_idx + 1, min(len(events), best_idx + 3)):
+            ctx_text = self._format_event(events[i])
+            if ctx_text:
+                trailing_context.append(ctx_text)
+
+        return ResultSummary(
+            result=best_text,
+            leading_context=leading_context,
+            trailing_context=trailing_context,
+            score=best_score
+        )
+
+    def _format_event(self, event: Dict[str, Any]) -> Optional[str]:
+        """
+        Format an event object into a text representation.
+
+        Args:
+            event: A parsed JSON event from the log
+
+        Returns:
+            Formatted text, or None if the event is not useful
+        """
+        if not isinstance(event, dict):
+            return str(event) if event else None
+
+        # Check for common output fields from executors
+        for field_name in ['output', 'stdout', 'text', 'content', 'message', 'data']:
+            if field_name in event and event[field_name]:
+                return str(event[field_name])
+
+        # If it's a structured response (like a tool call or status update), stringify it
+        if event:
+            try:
+                # Avoid dumping huge objects if possible, but for context we want full text
+                return json.dumps(event)
+            except (TypeError, ValueError):
+                return str(event)
+
+        return None
+
+    def _score_text(self, text: str) -> int:
+        """
+        Score a text candidate based on fuzzy heuristics.
+
+        Args:
+            text: The candidate text to score
+
+        Returns:
+            A score (higher is better).
+        """
+        if not text:
+            return 0
+
+        score = 0
+        text_upper = text.upper()
+
+        # Keywords scoring
+        if 'DONE' in text_upper:
+            score += self.score_weights['done_keyword']
+        if 'STATUS' in text_upper:
+            score += self.score_weights['status_keyword']
+        if 'SUCCESS' in text_upper:
+            score += self.score_weights['success_keyword']
+        
+        # Requests for help/intervention (penalty)
+        if 'HUMAN' in text_upper:
+            score += self.score_weights['human_keyword']
+        if 'INTERVENTION' in text_upper:
+            score += self.score_weights['intervention_keyword']
+
+        # JSON patterns
+        if '{' in text and '}' in text:
+            score += self.score_weights['json_structure']
+            try:
+                # Check for actual valid JSON
+                # Some agents output JSON inside markdown, we try to find it
+                json_match = re.search(r'\{.*\}', text, re.DOTALL)
+                if json_match:
+                    json.loads(json_match.group())
+                    score += self.score_weights['json_valid']
+            except:
+                pass
+
+        # Field-specific scoring (if text is JSON string)
+        if '"status"' in text or "'status'" in text:
+            score += self.score_weights['status_field']
+        if '"result"' in text or "'result'" in text:
+            score += self.score_weights['result_field']
+
+        # Length bonus
+        if len(text) > 100:
+            score += self.score_weights['substantial_length']
+
+        return score
 
     def _format_event(self, event: Dict[str, Any]) -> Optional[str]:
         """
@@ -142,155 +275,99 @@ class ResultExtractor:
 
 class PromptGenerator:
     """
-    Generates context-aware prompts for Worker and Auditor agents.
+    Generates context-aware XML-based prompts for Worker and Auditor agents.
 
     Injects the extracted result, feedback, and task metadata into prompts
     to provide continuity and context for multi-iteration loops.
     """
 
-    def __init__(self, context):
+    def __init__(self, context=None, max_prompt_length: int = 100000):
         """
         Initialize the prompt generator.
 
         Args:
-            context: ExecutionContext instance containing session data
+            context: Optional ExecutionContext instance containing session data
+            max_prompt_length: Maximum allowed length for the prompt
         """
         self.context = context
+        self.max_prompt_length = max_prompt_length
 
     def generate_worker_prompt(
         self,
-        task: str,
-        iteration: int = 1,
-        feedback: Optional[str] = None,
-        variables: Optional[Dict[str, Any]] = None,
+        oneshot_id: str,
+        iteration: int,
+        instruction: str,
+        system_prompt: str,
+        auditor_feedback: Optional[str] = None,
+        reworker_system_prompt: Optional[str] = None,
     ) -> str:
         """
-        Generate a prompt for the Worker agent.
-
-        Args:
-            task: The original task description
-            iteration: Current iteration number (1-based)
-            feedback: Optional feedback from the Auditor for reiteration
-            variables: Optional variable substitutions
-
-        Returns:
-            A formatted prompt for the Worker
+        Generate a worker prompt using XML layout.
         """
-        prompt_parts = []
+        parts = []
+        parts.append(f"<oneshot>{oneshot_id} worker #{iteration}</oneshot>\n")
 
-        # Task description
-        prompt_parts.append(f"# Task (Iteration {iteration})\n")
-        prompt_parts.append(task)
-        prompt_parts.append("")
+        if auditor_feedback:
+            parts.append("<auditor-feedback>")
+            parts.append(auditor_feedback)
+            parts.append("</auditor-feedback>\n")
+            
+            parts.append("<instruction>")
+            parts.append(instruction)
+            parts.append("</instruction>\n")
+            
+            if reworker_system_prompt:
+                parts.append(reworker_system_prompt)
+        else:
+            parts.append(system_prompt)
+            parts.append("\n")
+            parts.append("<instruction>")
+            parts.append(instruction)
+            parts.append("</instruction>")
 
-        # Feedback from previous iteration (if any)
-        if feedback:
-            prompt_parts.append("## Feedback from Auditor\n")
-            prompt_parts.append(feedback)
-            prompt_parts.append("")
-
-        # Context from previous work
-        if iteration > 1:
-            worker_result = self.context.get_worker_result()
-            if worker_result:
-                prompt_parts.append("## Previous Work Summary\n")
-                prompt_parts.append(worker_result)
-                prompt_parts.append("")
-
-        # Variable substitutions
-        if variables:
-            prompt_parts.append("## Variables\n")
-            for key, value in variables.items():
-                prompt_parts.append(f"- `{key}`: {value}")
-            prompt_parts.append("")
-
-        # Final instruction
-        prompt_parts.append(
-            "Please complete this task. When done, provide a summary "
-            "of what was accomplished, starting with 'DONE'."
-        )
-
-        return "\n".join(prompt_parts)
+        prompt = "\n".join(parts)
+        return self._truncate_to_limit(prompt)
 
     def generate_auditor_prompt(
         self,
-        task: str,
-        worker_result: str,
-        iteration: int = 1,
+        oneshot_id: str,
+        iteration: int,
+        original_prompt: str,
+        result_summary: ResultSummary,
+        auditor_system_prompt: str,
     ) -> str:
         """
-        Generate a prompt for the Auditor agent.
-
-        Args:
-            task: The original task description
-            worker_result: The Worker's result/summary
-            iteration: Current iteration number (1-based)
-
-        Returns:
-            A formatted prompt for the Auditor
+        Generate an auditor prompt using XML layout.
         """
-        prompt_parts = []
+        parts = []
+        parts.append(f"<oneshot>{oneshot_id} audit #{iteration}</oneshot>\n")
 
-        prompt_parts.append("# Auditor Review\n")
-        prompt_parts.append(f"Iteration: {iteration}\n")
+        parts.append("<what-was-requested>")
+        parts.append(original_prompt)
+        parts.append("</what-was-requested>\n")
 
-        prompt_parts.append("## Original Task\n")
-        prompt_parts.append(task)
-        prompt_parts.append("")
+        parts.append("<worker-result>")
+        
+        if result_summary.leading_context:
+            parts.append(" <leading-context>")
+            parts.append("\n".join(result_summary.leading_context))
+            parts.append(" </leading-context>")
+        
+        parts.append(result_summary.result)
+        
+        if result_summary.trailing_context:
+            parts.append(" <trailing-context>")
+            parts.append("\n".join(result_summary.trailing_context))
+            parts.append(" </trailing-context>")
+            
+        parts.append("</worker-result>\n")
+        parts.append(auditor_system_prompt)
 
-        prompt_parts.append("## Worker's Result\n")
-        prompt_parts.append(worker_result)
-        prompt_parts.append("")
+        prompt = "\n".join(parts)
+        return self._truncate_to_limit(prompt)
 
-        prompt_parts.append(
-            "## Your Assessment\n"
-            "Review the worker's result and provide one of:\n"
-            "1. DONE - if the task is complete and correct\n"
-            "2. RETRY with feedback - if more work is needed\n"
-            "3. IMPOSSIBLE - if the task cannot be completed\n\n"
-            "Provide your verdict in JSON format with 'verdict' and 'feedback' fields."
-        )
-
-        return "\n".join(prompt_parts)
-
-    def generate_recovery_prompt(
-        self,
-        task: str,
-        last_state: str,
-        executor_logs: Optional[str] = None,
-    ) -> str:
-        """
-        Generate a prompt for recovery analysis.
-
-        Args:
-            task: The original task description
-            last_state: The last recorded state before failure
-            executor_logs: Optional logs from the executor for forensic analysis
-
-        Returns:
-            A formatted prompt for recovery analysis
-        """
-        prompt_parts = []
-
-        prompt_parts.append("# Recovery Analysis\n")
-        prompt_parts.append(f"Last State: {last_state}\n")
-
-        prompt_parts.append("## Task Context\n")
-        prompt_parts.append(task)
-        prompt_parts.append("")
-
-        if executor_logs:
-            prompt_parts.append("## Executor Logs\n")
-            prompt_parts.append(executor_logs)
-            prompt_parts.append("")
-
-        prompt_parts.append(
-            "## Analysis Request\n"
-            "Please determine if the task was completed despite the failure.\n"
-            "Respond with JSON containing:\n"
-            "- 'status': 'success', 'partial', or 'failed'\n"
-            "- 'evidence': Description of findings\n"
-            "- 'summary': Any recovered output"
-        )
-
-        return "\n".join(prompt_parts)
+    def _truncate_to_limit(self, prompt: str) -> str:
+        """Truncate prompt if it exceeds max_prompt_length (simple character truncation)."""
+        if len(prompt) > self.max_prompt_length:
+            return prompt[:self.max_prompt_length] + "... [TRUNCATED]"
+        return prompt
