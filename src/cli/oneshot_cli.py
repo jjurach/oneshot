@@ -3,7 +3,7 @@
 
 import asyncio
 import sys
-from oneshot.oneshot import main, run_oneshot_async_legacy
+from oneshot.oneshot import main
 
 async def main_async():
     """Async version of main function."""
@@ -15,7 +15,7 @@ async def main_async():
         log_debug, log_verbose, log_info, find_latest_session, SESSION_DIR,
         count_iterations
     )
-    from oneshot.config import get_global_config, apply_executor_defaults
+    from oneshot.config import get_global_config, apply_executor_defaults, get_config_path
     from pathlib import Path
 
     # Load configuration file

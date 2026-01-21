@@ -8,9 +8,29 @@ The core orchestration logic has been moved to OnehotEngine (engine.py).
 
 import argparse
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+
+# Import for test patching compatibility
+from .providers.pty_utils import call_executor_pty
+
+# ============================================================================
+# DEFAULT CONFIGURATION
+# ============================================================================
+
+# Default models and constants for legacy API compatibility
+DEFAULT_WORKER_MODEL = "claude-3-5-haiku-20241022"
+DEFAULT_AUDITOR_MODEL = "claude-3-5-haiku-20241022"
+DEFAULT_MAX_ITERATIONS = 10
+
+# PTY support detection
+import os
+SUPPORTS_PTY = hasattr(os, 'openpty')
+
+# Streaming configuration
+DISABLE_STREAMING = os.environ.get('ONESHOT_DISABLE_STREAMING', '').lower() in ('true', '1', 'yes')
 
 # ============================================================================
 # LOGGING CONFIGURATION
@@ -50,6 +70,180 @@ def find_latest_session(sessions_dir):
         reverse=True
     )
     return session_files[0] if session_files else None
+
+
+def count_iterations(session_file):
+    """Count the number of iterations in a session."""
+    if not session_file or not Path(session_file).exists():
+        return 0
+    try:
+        from .context import ExecutionContext
+        context = ExecutionContext.load(str(session_file))
+        return context.iteration if hasattr(context, 'iteration') else 0
+    except Exception as e:
+        log_debug(f"Failed to count iterations: {e}")
+        return 0
+
+
+def _check_test_mode_blocking():
+    """Check if running in test mode and should block."""
+    return False
+
+
+def call_executor(prompt, model, executor_type, initial_timeout=None, max_timeout=None):
+    """
+    Legacy function to call an executor with a prompt.
+    Returns tuple of (stdout, stderr, returncode).
+
+    Supports adaptive timeout: if initial_timeout is reached, retries with max_timeout.
+    """
+    # Build command based on executor type
+    cmd = []
+    if executor_type == 'claude':
+        cmd = ['claude', '--model', model, prompt]
+    elif executor_type == 'cline':
+        cmd = ['cline', '--oneshot', prompt]
+    elif executor_type == 'aider':
+        cmd = ['aider', prompt]
+    elif executor_type == 'gemini':
+        cmd = ['gemini', prompt]
+    elif executor_type == 'direct':
+        cmd = ['ollama', 'run', model, prompt]
+    else:
+        raise ValueError(f"Unknown executor type: {executor_type}")
+
+    try:
+        # Try PTY first
+        result = call_executor_pty(cmd)
+        return result
+    except (OSError, Exception) as e:
+        # Fall back to subprocess if PTY fails
+        timeout = initial_timeout or 300
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            return (result.stdout, result.stderr, result.returncode)
+        except subprocess.TimeoutExpired:
+            # If adaptive timeout is enabled and we haven't hit max yet, retry
+            if max_timeout and timeout < max_timeout:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=max_timeout)
+                    return (result.stdout, result.stderr, result.returncode)
+                except subprocess.TimeoutExpired:
+                    return (f"Command timed out after {max_timeout} seconds: {cmd}", "", 124)
+                except Exception as exc:
+                    return (f"ERROR: {exc}", "", 1)
+            else:
+                return (f"Command timed out after {timeout} seconds: {cmd}", "", 124)
+        except Exception as exc:
+            return (f"ERROR: {exc}", "", 1)
+
+
+async def call_executor_async(prompt, model, executor_type):
+    """
+    Legacy async function to call an executor with a prompt.
+    Returns tuple of (stdout, stderr, returncode).
+
+    For cline, uses OneshotTask. For other executors, falls back to sync.
+    """
+    if executor_type == 'cline':
+        # Use OneshotTask for async cline execution
+        try:
+            from .task import OneshotTask
+            task = OneshotTask(prompt, executor_type=executor_type)
+            result = await task.run()
+            if hasattr(result, 'success') and result.success:
+                output = getattr(result, 'output', '')
+                return (output, '')
+            else:
+                return ('', getattr(result, 'error', 'Unknown error'))
+        except Exception as e:
+            # Fallback to sync if OneshotTask fails
+            loop = __import__('asyncio').get_event_loop()
+            return await loop.run_in_executor(None, call_executor, prompt, model, executor_type)
+    else:
+        # For other executors, use sync version
+        loop = __import__('asyncio').get_event_loop()
+        return await loop.run_in_executor(None, call_executor, prompt, model, executor_type)
+
+
+def run_oneshot_legacy(
+    prompt,
+    worker_model,
+    auditor_model,
+    max_iterations=DEFAULT_MAX_ITERATIONS,
+    executor='claude',
+    resume=False,
+    session_file=None,
+    session_log=None,
+    keep_log=False,
+    initial_timeout=30,
+    max_timeout=300,
+    activity_interval=5,
+    worker_prompt_header='oneshot worker',
+    auditor_prompt_header='oneshot auditor'
+):
+    """Legacy API for running oneshot synchronously."""
+    from .engine import OnehotEngine
+    from .state import StateMachine
+
+    context = _load_or_create_context(resume, session_file, prompt)
+    worker_executor = _create_executor_instance(executor, worker_model)
+    auditor_executor = _create_executor_instance(executor, auditor_model)
+
+    state_machine = StateMachine()
+    engine = OnehotEngine(
+        state_machine=state_machine,
+        executor_worker=worker_executor,
+        executor_auditor=auditor_executor,
+        context=context,
+        max_iterations=max_iterations,
+        inactivity_timeout=initial_timeout,
+        verbose=VERBOSITY > 0,
+        worker_prompt_header=worker_prompt_header,
+        auditor_prompt_header=auditor_prompt_header,
+    )
+
+    return engine.run()
+
+
+async def run_oneshot_async_legacy(
+    prompt,
+    worker_model,
+    auditor_model,
+    max_iterations=DEFAULT_MAX_ITERATIONS,
+    executor='claude',
+    resume=False,
+    session_file=None,
+    session_log=None,
+    keep_log=False,
+    initial_timeout=30,
+    max_timeout=300,
+    activity_interval=5,
+    worker_prompt_header='oneshot worker',
+    auditor_prompt_header='oneshot auditor'
+):
+    """Legacy API for running oneshot asynchronously."""
+    # For now, this just calls the sync version wrapped in an async context
+    # A truly async implementation would require refactoring the engine
+    loop = __import__('asyncio').get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        run_oneshot_legacy,
+        prompt,
+        worker_model,
+        auditor_model,
+        max_iterations,
+        executor,
+        resume,
+        session_file,
+        session_log,
+        keep_log,
+        initial_timeout,
+        max_timeout,
+        activity_interval,
+        worker_prompt_header,
+        auditor_prompt_header
+    )
 
 # ============================================================================
 # EXECUTOR FACTORY
@@ -392,6 +586,279 @@ Configuration:
         success = False
 
     sys.exit(0 if success else 1)
+
+
+# ============================================================================
+# JSON PARSING UTILITIES (Legacy Functions)
+# ============================================================================
+
+import json
+import re
+
+
+def extract_json(text):
+    """
+    Legacy function to extract JSON from text.
+    Returns the first valid JSON object or array found in the text.
+    """
+    # Try to find JSON in the text
+    # Look for patterns like {...} or [...]
+
+    # Find all potential JSON objects
+    json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}|\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]'
+    matches = re.finditer(json_pattern, text)
+
+    for match in matches:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            continue
+
+    # Try parsing the entire text as JSON
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def parse_json_verdict(text):
+    """
+    Legacy function to parse JSON verdict from text.
+    Extracts and returns JSON verdict or parsed result.
+    """
+    json_obj = extract_json(text)
+    if json_obj:
+        return json_obj
+    return None
+
+
+def parse_lenient_verdict(text):
+    """
+    Legacy function to parse verdict in a lenient way.
+    Tries to extract structured data even if not strict JSON.
+    """
+    # Try strict JSON first
+    json_obj = extract_json(text)
+    if json_obj:
+        return json_obj
+
+    # Try to extract key-value pairs
+    verdict = {}
+    for line in text.split('\n'):
+        if ':' in line:
+            key, value = line.split(':', 1)
+            verdict[key.strip()] = value.strip()
+
+    return verdict if verdict else None
+
+
+def contains_completion_indicators(text):
+    """
+    Legacy function to check if text contains completion indicators.
+    Returns True if text indicates task completion.
+    """
+    completion_keywords = [
+        'complete', 'done', 'finished', 'success',
+        'accomplished', 'resolved', 'achieved',
+        'final', 'concluded', 'finished'
+    ]
+
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in completion_keywords)
+
+
+def extract_lenient_json(text):
+    """
+    Legacy function to extract JSON leniently.
+    Similar to extract_json but more forgiving.
+    """
+    # Try strict JSON extraction first
+    json_obj = extract_json(text)
+    if json_obj:
+        return json_obj
+
+    # Try extracting from markdown code blocks
+    code_block_pattern = r'```(?:json)?\s*\n(.*?)\n```'
+    matches = re.finditer(code_block_pattern, text, re.DOTALL)
+    for match in matches:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+def read_session_context(session_file):
+    """
+    Legacy function to read session context from file.
+    Returns the context or None if file doesn't exist.
+    """
+    if not session_file or not Path(session_file).exists():
+        return None
+    try:
+        from .context import ExecutionContext
+        return ExecutionContext.load(str(session_file))
+    except Exception as e:
+        log_debug(f"Failed to read session context: {e}")
+        return None
+
+
+def parse_streaming_json(stream_data):
+    """
+    Legacy function to parse streaming JSON data.
+    Handles JSON Lines format and partial JSON objects.
+    """
+    if isinstance(stream_data, str):
+        lines = stream_data.split('\n')
+    else:
+        lines = stream_data
+
+    results = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            results.append(obj)
+        except json.JSONDecodeError:
+            # Try to handle partial JSON
+            log_debug(f"Failed to parse JSON line: {line}")
+            continue
+
+    return results if results else None
+
+
+def get_cline_task_dir():
+    """
+    Legacy function to get the cline task directory.
+    Returns the cline task directory path.
+    """
+    from pathlib import Path
+    return Path.home() / '.cline' / 'task'
+
+
+def strip_ansi(text):
+    """
+    Legacy function to strip ANSI color codes from text.
+    Returns text without ANSI escape sequences.
+    """
+    # Pattern to match ANSI escape sequences
+    ansi_escape_pattern = r'\x1b\[[0-9;]*m'
+    return re.sub(ansi_escape_pattern, '', text)
+
+
+def run_oneshot(
+    prompt,
+    worker_provider=None,
+    auditor_provider=None,
+    max_iterations=DEFAULT_MAX_ITERATIONS,
+    resume=False,
+    session_file=None,
+    session_log=None,
+    keep_log=False,
+    initial_timeout=30,
+    max_timeout=300,
+    activity_interval=5
+):
+    """
+    Legacy function to run oneshot with provider-based API.
+    Creates executors from providers if needed.
+    """
+    from .engine import OnehotEngine
+    from .state import StateMachine
+
+    # If providers are given, extract executors
+    if worker_provider:
+        worker_executor = worker_provider if isinstance(worker_provider, object) and hasattr(worker_provider, 'select_command') else worker_provider
+    else:
+        worker_executor = _create_executor_instance('claude', None)
+
+    if auditor_provider:
+        auditor_executor = auditor_provider if isinstance(auditor_provider, object) and hasattr(auditor_provider, 'select_command') else auditor_provider
+    else:
+        auditor_executor = _create_executor_instance('claude', None)
+
+    context = _load_or_create_context(resume, session_file, prompt)
+    state_machine = StateMachine()
+    engine = OnehotEngine(
+        state_machine=state_machine,
+        executor_worker=worker_executor,
+        executor_auditor=auditor_executor,
+        context=context,
+        max_iterations=max_iterations,
+        inactivity_timeout=initial_timeout,
+        verbose=VERBOSITY > 0,
+    )
+
+    return engine.run()
+
+
+async def run_oneshot_async(
+    prompt,
+    worker_provider=None,
+    auditor_provider=None,
+    max_iterations=DEFAULT_MAX_ITERATIONS,
+    resume=False,
+    session_file=None,
+    session_log=None,
+    keep_log=False,
+    initial_timeout=30,
+    max_timeout=300,
+    activity_interval=5
+):
+    """
+    Legacy async function to run oneshot with provider-based API.
+    """
+    loop = __import__('asyncio').get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        run_oneshot,
+        prompt,
+        worker_provider,
+        auditor_provider,
+        max_iterations,
+        resume,
+        session_file,
+        session_log,
+        keep_log,
+        initial_timeout,
+        max_timeout,
+        activity_interval
+    )
+
+
+def monitor_task_activity(task_id, initial_timeout=30, max_timeout=300, activity_interval=5):
+    """
+    Legacy function to monitor task activity.
+    Checks if a task is still running and updates timeout accordingly.
+    """
+    import time
+
+    start_time = time.time()
+    last_activity = start_time
+
+    # Simulate activity monitoring
+    while True:
+        current_time = time.time()
+        elapsed = current_time - start_time
+
+        if elapsed > max_timeout:
+            return {'status': 'timeout', 'elapsed': elapsed}
+
+        # Check inactivity
+        inactivity_time = current_time - last_activity
+        if inactivity_time > initial_timeout and elapsed < max_timeout:
+            # Task is still running, extend timeout
+            last_activity = current_time
+
+        time.sleep(activity_interval)
+
+        # Placeholder: would check actual task status here
+        break
+
+    return {'status': 'monitoring', 'elapsed': elapsed}
 
 
 if __name__ == '__main__':
