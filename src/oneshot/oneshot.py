@@ -139,6 +139,26 @@ def _load_or_create_context(resume: bool, session_file: Optional[Path], task_pro
     return context
 
 # ============================================================================
+# UI CALLBACKS
+# ============================================================================
+
+def _print_pipeline_event(event: dict):
+    """
+    Simple callback to print pipeline events to stdout.
+
+    Args:
+        event (dict): The event dictionary from the pipeline
+    """
+    if event.get('is_heartbeat'):
+        return
+
+    data = event.get('data')
+    if data:
+        # Print raw data to stdout (usually contains newline)
+        print(data, end='', flush=True)
+
+
+# ============================================================================
 # CLI ENTRY POINT
 # ============================================================================
 
@@ -400,6 +420,7 @@ Configuration:
             max_iterations=args.max_iterations,
             inactivity_timeout=args.initial_timeout,
             verbose=args.verbose or args.debug,
+            ui_callback=_print_pipeline_event,
             worker_prompt_header=args.worker_prompt_header,
             auditor_prompt_header=args.auditor_prompt_header,
             reworker_prompt_header=args.reworker_prompt_header,
