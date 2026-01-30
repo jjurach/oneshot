@@ -23,7 +23,7 @@ These files define:
 ## The Mandatory Reading List
 
 ### 1. Core Workflow
-**File:** [docs/system-prompts/workflows/logs-first.md](workflows/logs-first.md)
+**File:** [docs/system-prompts/workflows/logs-first.md](docs/system-prompts/workflows/logs-first.md)
 
 **What it contains:**
 - 5-step workflow (Analyze Request → Create Spec → Create Plan → Get Approval → Implement & Document)
@@ -69,10 +69,10 @@ These files define:
 
 These files provide additional context when working on specific features:
 
-- **Architecture:** [docs/architecture.md](docs/architecture.md) - System design, components, and data flow
-- **Implementation Reference:** [docs/implementation-reference.md](docs/implementation-reference.md) - Code patterns, style, and conventions
+- **Architecture:** [docs/project-structure.md](docs/project-structure.md) - System design, components, and data flow
+- **Implementation Reference:** [docs/definition-of-done.md](docs/definition-of-done.md) - Code patterns, style, and conventions
 - **Workflows:** [docs/workflows.md](docs/workflows.md) - Development processes and available workflow options
-- **Tool Guides:** [docs/system-prompts/tools/](tools/) - Guides for Aider, Claude Code, and other tools
+- **Tool Guides:** [docs/system-prompts/tools/](docs/system-prompts/tools/) - Guides for Aider, Claude Code, and other tools
 
 ---
 

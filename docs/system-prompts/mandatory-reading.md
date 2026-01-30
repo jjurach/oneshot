@@ -63,8 +63,8 @@ These files define:
 
 These files provide additional context when working on specific features:
 
-- **Architecture:** [docs/architecture.md](../architecture.md) - System design, components, and data flow
-- **Implementation Reference:** [docs/implementation-reference.md](../implementation-reference.md) - Code patterns, style, and conventions
+- **Architecture:** [docs/project-structure.md](../project-structure.md) - System design, components, and data flow
+- **Implementation Reference:** [docs/definition-of-done.md](../definition-of-done.md) - Code patterns, style, and conventions
 - **Workflows:** [docs/workflows.md](../workflows.md) - Development processes and available workflow options
 - **Tool Guides:** [docs/system-prompts/tools/](tools/) - Guides for Aider, Claude Code, and other tools
 

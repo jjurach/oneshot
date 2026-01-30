@@ -50,14 +50,20 @@ ENTRY_POINTS = {
     ".gemini/GEMINI.md",
 }
 
+# Directories to exclude from all scans (third-party, virtual envs, etc.)
+IGNORE_DIRS = {
+    "external",
+    "venv",
+    ".git",
+    "node_modules",
+    "__pycache__",
+}
+
 # Directories to exclude from plain-text reference checks (transient/working documents)
 TRANSIENT_DIRS = {
     "dev_notes",
     "tmp",
-    ".git",
-    "node_modules",
-    "venv",
-    "__pycache__",
+    "requests",
 }
 
 # Allowlisted back-references (intentional project integration links)
@@ -67,6 +73,7 @@ ALLOWED_BACK_REFERENCES = {
         "../workflows.md",
         "../architecture.md",
         "../implementation-reference.md",
+        "../project-structure.md",
     },
     "docs/system-prompts/mandatory-reading.md": {
         "../definition-of-done.md",
@@ -74,6 +81,7 @@ ALLOWED_BACK_REFERENCES = {
         "../architecture.md",
         "../implementation-reference.md",
         "../workflows.md",
+        "../project-structure.md",
     },
     "docs/system-prompts/tips/README.md": {
         "../../definition-of-done.md",
@@ -270,10 +278,9 @@ class DocumentScanner:
         all_md_files = list(self.project_root.rglob("*.md"))
 
         for md_file in all_md_files:
-            if ".git" in str(md_file):
-                continue
-
             relative_path = str(md_file.relative_to(self.project_root))
+            if any(ignored in relative_path for ignored in IGNORE_DIRS):
+                continue
             with open(md_file, "r", encoding="utf-8") as f:
                 content = f.read()
 
@@ -493,10 +500,9 @@ class DocumentScanner:
         all_md_files = list(self.project_root.rglob("*.md"))
 
         for md_file in all_md_files:
-            if ".git" in str(md_file):
-                continue
-
             relative_path = str(md_file.relative_to(self.project_root))
+            if any(ignored in relative_path for ignored in IGNORE_DIRS):
+                continue
 
             # Skip transient directories (working documents, not canonical)
             if any(transient in relative_path for transient in TRANSIENT_DIRS):
@@ -694,11 +700,11 @@ class DocumentScanner:
         kebab_pattern = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 
         for md_file in docs_dir.rglob("*.md"):
-            if ".git" in str(md_file):
+            relative_path = str(md_file.relative_to(self.project_root))
+            if any(ignored in relative_path for ignored in IGNORE_DIRS):
                 continue
 
             filename = md_file.name
-            relative_path = str(md_file.relative_to(self.project_root))
 
             # Skip system-prompts/tools/ (already documented separately)
             if "system-prompts/tools" in relative_path:

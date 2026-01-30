@@ -18,9 +18,19 @@ Supports multiple provider types:
   - **Direct Provider**: Direct HTTP API calls to OpenAI-compatible endpoints
   - **Mixed Providers**: Use different providers for worker and auditor (e.g., expensive commercial worker + free local auditor)
 - **Local Model Support**: Direct integration with Ollama and other OpenAI-compatible APIs
-- **Multiple Executors**: Supports both `claude` and `cline` executors
-- **Configurable Models**: Choose different models for worker and auditor roles
+- **Multiple Executors**: Supports `claude`, `cline`, `aider`, `gemini`, `codex`, and `direct` executors
 - **Resume Capability**: Continue interrupted sessions from where they left off
+
+## Supported Executors
+
+Oneshot supports multiple executor types for autonomous task completion:
+
+- **claude** - Claude CLI executor. See [Claude Code Guide](docs/system-prompts/tools/claude-code.md).
+- **cline** - Cline VS Code extension integration. See [Cline Guide](docs/system-prompts/tools/cline.md).
+- **aider** - Aider code editor integration. See [Aider Guide](docs/system-prompts/tools/aider.md).
+- **gemini** - Google Gemini CLI executor. See [Gemini Guide](docs/system-prompts/tools/gemini.md).
+- **codex** - Codex executor. See [Codex Guide](docs/system-prompts/tools/codex.md).
+- **direct** - Direct API calls to OpenAI-compatible endpoints. See [Direct Executor Guide](docs/direct-executor.md).
 
 ## Installation
 

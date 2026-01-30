@@ -14,13 +14,13 @@ This document provides a comprehensive index of all documentation in the oneshot
 ### `/docs/` Directory
 Contains detailed technical documentation:
 
-- **overview.md** (this file) - Documentation index and navigation guide
-- **project-structure.md** - Locations of project components and architecture details
-- **templates.md** - Mandatory templates for Project Plans and Change Documentation
-- **streaming-and-state-management.md** - Design specification for streaming activity processing, state machine persistence, and resume/recovery features
-- **cline-activity-json.md** - Documentation of Cline's JSON output format for activity streaming
-- **direct-executor.md** - Direct executor implementation details for OpenAI-compatible endpoints
-- **possible-todos.md** - Potential future improvements and tasks
+- **`overview.md`** (this file) - Documentation index and navigation guide
+- **`project-structure.md`** - Locations of project components and architecture details
+- **`templates.md`** - Mandatory templates for Project Plans and Change Documentation
+- **`streaming-and-state-management.md`** - Design specification for streaming activity processing, state machine persistence, and resume/recovery features
+- **`cline-activity-json.md`** - Documentation of Cline's JSON output format for activity streaming
+- **`direct-executor.md`** - Direct executor implementation details for OpenAI-compatible endpoints
+- **`possible-todos.md`** - Potential future improvements and tasks
 
 ## Quick Reference
 
@@ -101,7 +101,7 @@ Oneshot is designed to provide real-time streaming updates from agent execution 
 - **State Machine**: Persistent state tracking in `<oneshot-id>-oneshot.json` with full state transition history
 - **Resume/Recovery**: Ability to resume interrupted executions and recover from failures
 
-For complete details, see **streaming-and-state-management.md**.
+For complete details, see **`streaming-and-state-management.md`**.
 
 ### Prompt Generation System
 
@@ -116,9 +116,9 @@ Oneshot uses a decentralized prompt generation architecture where each executor 
 - Context-aware formatting (iteration count, feedback, task results)
 - Executor-specific dialects (XML vs Markdown)
 
-For implementation details, see **project-structure.md**.
+For implementation details, see **`project-structure.md`**.
 
-### Activity Log Format
+## Activity Log Format
 
 Each executor's activity is captured in real-time as NDJSON (newline-delimited JSON):
 
