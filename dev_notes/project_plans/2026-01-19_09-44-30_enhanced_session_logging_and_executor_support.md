@@ -2,7 +2,7 @@
 
 **Date:** 2026-01-19 09:44:30
 **Status:** Pending Approval
-**Related Request:** dev_notes/requests/prompt-03.md
+**Source:** dev_notes/specs/2026-01-19_09-41-20_prompt-03.md
 
 ## Objective
 

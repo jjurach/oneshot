@@ -1,5 +1,7 @@
 # Project Plan: Executor Recovery and Resume Feature
 
+**Source:** dev_notes/specs/2026-01-19_17-14-15_prompt-10.md
+
 ## Objective
 
 Implement a robust recovery and resume mechanism for oneshot when the cline executor becomes stuck or times out. This addresses the issue where Cline processes may complete work but fail to properly report completion to Oneshot, resulting in stuck iterations and timeouts.
@@ -239,7 +241,7 @@ The solution includes:
 - Edge cases (corrupt session, missing task history, etc.)
 
 ### Manual Testing
-1. Reproduce the original timeout scenario from prompt-10.md
+1. Reproduce the original timeout scenario from dev_notes/specs/2026-01-19_17-14-15_prompt-10.md
 2. Verify session correlation ID in worker prompt
 3. Identify Cline session using `cline task list`
 4. Execute `oneshot --resume <session_id>`
@@ -345,7 +347,7 @@ The solution includes:
 
 ## Notes
 
-- This plan addresses the core issue from prompt-10.md: incomplete Cline execution reporting causing Oneshot iterations to hang
+- This plan addresses the core issue from dev_notes/specs/2026-01-19_17-14-15_prompt-10.md: incomplete Cline execution reporting causing Oneshot iterations to hang
 - The session correlation ID (timestamp pattern in worker prompt) enables easy matching between Oneshot and Cline sessions
 - The `--resume` feature allows recovery without losing context or requiring manual re-execution
 - Process recovery mechanisms prevent indefinite hangs by detecting stuck Cline processes

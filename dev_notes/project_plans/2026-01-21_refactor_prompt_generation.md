@@ -1,8 +1,8 @@
 # Project Plan: Refactor Prompt Generation to BaseExecutor
 
-**Objective**: Decentralize prompt generation logic from the `OnehotEngine` into the `BaseExecutor` and its subclasses. This allows each executor to define its own "Voice" and "Protocol" (e.g., Markdown for Cline vs. XML for Claude), resolving issues where Cline is confused by strict XML tags.
+**Source:** dev_notes/specs/2026-01-20_23-03-09_prompt-17.md
 
-**Related Request**: `dev_notes/requests/prompt-17.md` (Implicit - current conversation)
+**Objective**: Decentralize prompt generation logic from the `OnehotEngine` into the `BaseExecutor` and its subclasses.
 
 ## Context & Motivation
 Currently, `OnehotEngine` and `PromptGenerator` enforce a single, strict prompt format (heavy XML, strict JSON requirements) for all agents.

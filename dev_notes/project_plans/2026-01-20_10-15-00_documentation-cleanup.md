@@ -1,10 +1,8 @@
 # Project Plan: Documentation Cleanup & Validation for Executor Abstraction
 
-**Related Requests**:
-- `dev_notes/requests/prompt-12.md` (Initial cleanup request)
-- `dev_notes/requests/prompt-13.md` (Demo scripts and directory restructuring)
-
----
+**Source:**
+- dev_notes/specs/2026-01-20_08-53-14_prompt-12.md
+- dev_notes/specs/2026-01-20_09-05-40_prompt-13.md
 
 ## Objective
 

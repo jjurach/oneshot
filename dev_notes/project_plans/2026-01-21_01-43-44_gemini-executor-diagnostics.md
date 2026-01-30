@@ -1,7 +1,7 @@
 # Project Plan: Gemini Executor Diagnostics & JSON Stream Formatting
 
 **Status:** COMPLETED
-**Source**: `dev_notes/requests/prompt-16.5.md`
+**Source:** dev_notes/specs/2026-01-21_01-43-05_prompt-16.5.md
 
 ## Objective
 

@@ -1,5 +1,7 @@
 # Project Plan: Commit Current Work
 
+**Source:** dev_notes/specs/2026-01-19_12-23-03_prompt-06.md
+
 ## Objective
 Commit all pending changes in the repository, including modified files and new documentation, to preserve the current state of development work.
 
@@ -12,7 +14,7 @@ Commit all pending changes in the repository, including modified files and new d
 
 ## Success Criteria
 - All modified files (.gitignore, src/oneshot/oneshot.py, src/oneshot/providers/activity_interpreter.py, tests/test_activity_interpreter.py) are committed
-- All untracked files (dev_notes/changes/2026-01-19_12-31-00_fix_ndjson_activity_logging.json_parsing.md, dev_notes/requests/prompt-06.md) are committed
+- All untracked files (dev_notes/changes/2026-01-19_12-31-00_fix_ndjson_activity_logging.json_parsing.md, dev_notes/specs/2026-01-19_12-23-03_prompt-06.md) are committed
 - Git status shows no uncommitted changes
 - Commit appears in git log with appropriate message
 

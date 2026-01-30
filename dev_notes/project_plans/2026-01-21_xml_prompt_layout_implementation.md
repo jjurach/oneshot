@@ -1,8 +1,10 @@
 # Project Plan: XML-Based Prompt Layout & Fuzzy Result Extraction
 
+**Source:** dev_notes/specs/2026-01-20_22-46-39_prompt-15.md
+
 **Status:** COMPLETED
 
-**Objective**: Implement an XML-based prompt structure for the "re-worker" flow and enhance the result extraction logic with fuzzy assessment and context awareness (leading/trailing activity), as specified in `dev_notes/requests/prompt-15.md`.
+**Objective**: Implement an XML-based prompt structure for the "re-worker" flow and enhance the result extraction logic with fuzzy assessment and context awareness (leading/trailing activity).
 
 ## Implementation Steps
 

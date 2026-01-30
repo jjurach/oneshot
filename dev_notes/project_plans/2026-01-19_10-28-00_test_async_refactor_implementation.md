@@ -1,7 +1,7 @@
 # Project Plan: Test Async Refactor Implementation
 
 ## 1. Overview
-Test the implementation of the async refactor plan described in `requests/prompt-01.md`. The refactor converts the oneshot library from synchronous blocking execution to an asynchronous, state-aware orchestration engine with parallel task execution, non-blocking I/O monitoring, and interrupt capabilities.
+Test the implementation of the async refactor plan described in `dev_notes/specs/2026-01-18_13-48-51_prompt-01.md`. The refactor converts the oneshot library from synchronous blocking execution to an asynchronous, state-aware orchestration engine with parallel task execution, non-blocking I/O monitoring, and interrupt capabilities.
 
 ## 2. Technical Stack
 * **Testing Framework:** pytest with pytest-asyncio
