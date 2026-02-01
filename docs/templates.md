@@ -1,52 +1,41 @@
-# Documentation Templates & Checklists
+# Planning Document Templates
 
-This document contains the mandatory structures for Project Plans and Change Documentation.
+This document provides templates for planning documents used in the oneshot project.
 
-## Project Plan Structure
+## Agent Kernel Templates
 
-**File Path:** `dev_notes/project_plans/YYYY-MM-DD_HH-MM-SS_description.md`
+The project follows the Agent Kernel template system. For complete template documentation, see:
 
-```markdown
-# Project Plan: [Project Name]
+- **[Template Structure Guide](system-prompts/templates/structure.md)** - Standard templates for project plans, architecture decisions, and investigation reports
 
-## Objective
-[Clear statement of what will be achieved]
+## Project-Specific Conventions
 
-## Implementation Steps
-1. [Step 1]
-2. [Step 2]
-...
+### Development Notes Directory
 
-## Success Criteria
-- [Criterion 1]
-- [Criterion 2]
+Development notes and session transcripts are stored in `dev_notes/` using the format:
 
-## Testing Strategy
-- [Unit tests to be added/modified]
-- [Manual verification steps]
-- [Integration tests]
-
-## Risk Assessment
-- [Risk 1]: [Mitigation]
+```
+dev_notes/subdir/YYYY-MM-DD_HH-MM-SS_description.md
 ```
 
-## Change Documentation Structure
+### Planning Documents
 
-**File Path:** `dev_notes/changes/YYYY-MM-DD_HH-MM-SS_description.md`
+When creating project plans, follow the structure from the Agent Kernel:
 
-```markdown
-# Change: [Brief Description]
+1. **Executive Summary** - Overview and objectives
+2. **Issues Summary** - Problems being addressed
+3. **Implementation Phases** - Step-by-step breakdown
+4. **Critical Files Summary** - Files to create, modify, or delete
+5. **Verification Steps** - Testing and validation
+6. **Success Criteria** - Measurable outcomes
+7. **Risk Mitigation** - Known risks and mitigation strategies
 
-## Related Project Plan
-[Link to the project plan file]
+## See Also
 
-## Overview
-[Brief summary of the changes made]
+- [AGENTS.md](../AGENTS.md) - Core workflow for AI agents
+- [Definition of Done](definition-of-done.md) - Quality standards
+- [Architecture](architecture.md) - System design
+- [Implementation Reference](implementation-reference.md) - Implementation patterns
 
-## Files Modified
-- `path/to/file1`: [Description of change]
-- `path/to/file2`: [Description of change]
-
-## Impact Assessment
-[Description of impact on existing functionality, API changes, etc.]
-```
+---
+Last Updated: 2026-02-01

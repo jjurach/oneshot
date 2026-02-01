@@ -1,6 +1,13 @@
-# Project Agents
+# Project Agents - oneshot
 
-TODO: describe whatever here
+This file defines the mandatory workflow for AI agents working on the oneshot project.
+
+**Quick Navigation:**
+- [Definition of Done](docs/definition-of-done.md) - Quality standards
+- [Architecture](docs/architecture.md) - System design
+- [Implementation Reference](docs/implementation-reference.md) - Patterns
+- [Workflows](docs/workflows.md) - Development process
+- [Templates](docs/templates.md) - Planning documents
 
 
 <!-- SECTION: MANDATORY-READING -->

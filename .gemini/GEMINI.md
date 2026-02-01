@@ -1,21 +1,16 @@
 # Gemini Instructions
 
-This project follows the **AGENTS.md** workflow.
+Follow **[AGENTS.md](../AGENTS.md)** workflow.
 
 ## Quick Links
-
-- **Read First:** [AGENTS.md](../AGENTS.md)
 - **Done Criteria:** [docs/definition-of-done.md](../docs/definition-of-done.md)
 - **Tool Guide:** [docs/system-prompts/tools/gemini.md](../docs/system-prompts/tools/gemini.md)
 - **Workflows:** [docs/workflows.md](../docs/workflows.md)
 
-## For Gemini Users
-
-The **[docs/system-prompts/tools/gemini.md](../docs/system-prompts/tools/gemini.md)** guide covers:
-- Setup and discovery
-- Workflow mapping to AGENTS.md
-- Multimodal capabilities and ReAct loop
-- Common patterns and examples
+## System Architecture
+- **Agent Kernel:** [docs/system-prompts/README.md](../docs/system-prompts/README.md)
+- **Architecture:** [docs/architecture.md](../docs/architecture.md)
+- **Implementation:** [docs/implementation-reference.md](../docs/implementation-reference.md)
 
 ---
-Last Updated: 2026-01-30
+Last Updated: 2026-02-01

@@ -358,7 +358,9 @@ class TestPromptGeneration:
 
     def test_auditor_prompt_generation(self, engine, mock_context):
         """Test auditor prompt generation."""
-        with patch.object(engine.result_extractor, 'extract_result', return_value="Worker result"):
+        from oneshot.protocol import ResultSummary
+        result_summary = ResultSummary(result="Worker result", score=100)
+        with patch.object(engine.result_extractor, 'extract_result', return_value=result_summary):
             prompt = engine._generate_auditor_prompt()
 
             assert 'Worker result' in prompt

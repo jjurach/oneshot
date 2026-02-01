@@ -276,6 +276,19 @@ oneshot --show-config
 - `--auditor-endpoint`: API endpoint URL for auditor when using direct provider
 - `--auditor-api-key`: API key for auditor direct provider (optional for local models)
 
+## Documentation
+
+### For AI Agents
+- **[AGENTS.md](AGENTS.md)** - Mandatory workflow for AI agents
+- **[Definition of Done](docs/definition-of-done.md)** - Quality standards
+- **[Workflows](docs/workflows.md)** - Development workflows
+
+### For Developers
+- **[Documentation Index](docs/README.md)** - Complete documentation navigation
+- **[Architecture](docs/architecture.md)** - System architecture
+- **[Implementation Reference](docs/implementation-reference.md)** - Code patterns
+- **[Contributing](docs/contributing.md)** - Contribution guidelines
+
 ## How It Works
 
 Oneshot operates in a worker-auditor loop:
