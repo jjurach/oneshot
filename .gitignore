@@ -181,3 +181,9 @@ tmp-*
 # External tool repositories
 external/
 *.out
+
+# Gas Town (added by gt)
+.runtime/
+.claude/
+.beads/
+.logs/
